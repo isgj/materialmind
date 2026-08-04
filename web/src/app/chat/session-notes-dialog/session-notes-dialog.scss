@@ -1,0 +1,43 @@
+:host {
+  display: block;
+}
+
+[mat-dialog-title],
+.notes-meta {
+  display: flex;
+  align-items: center;
+}
+
+[mat-dialog-title] {
+  gap: 10px;
+}
+
+[mat-dialog-title] mat-icon {
+  color: var(--mat-sys-primary);
+}
+
+mat-dialog-content {
+  display: grid;
+  gap: 16px;
+}
+
+.notes-meta {
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-label-medium);
+}
+
+.notes-content {
+  min-width: 0;
+  color: var(--mat-sys-on-surface);
+  font: var(--mat-sys-body-medium);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.notes-empty {
+  margin: 0;
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-body-medium);
+}

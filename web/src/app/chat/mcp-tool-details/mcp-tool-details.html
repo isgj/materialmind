@@ -1,0 +1,155 @@
+@let item = details();
+<section class="mcp-details" [class.mcp-error]="item.isError">
+  <div class="mcp-source">
+    <mat-icon aria-hidden="true">dns</mat-icon>
+    <span>{{ item.serverName }}</span>
+    <span aria-hidden="true">/</span>
+    <strong>{{ item.toolTitle || item.toolName }}</strong>
+  </div>
+
+  @if (item.cancelable) {
+    <div class="mcp-progress" aria-live="polite">
+      <mat-progress-bar
+        [mode]="determinateProgress() ? 'determinate' : 'indeterminate'"
+        [value]="progressValue()"
+        [attr.aria-label]="item.message || 'Waiting for the MCP server'"
+      />
+      <span>{{ item.message || 'Waiting for the MCP server' }}</span>
+      @if (determinateProgress()) {
+        <span>{{ item.progress }} / {{ item.total }}</span>
+      }
+    </div>
+  }
+
+  @if (item.error) {
+    <div class="mcp-error-summary" role="status">
+      <mat-icon aria-hidden="true">error_outline</mat-icon>
+      <span>{{ item.error }}</span>
+    </div>
+  }
+
+  @if (item.uiResourceUri) {
+    <app-mcp-app-view [sessionId]="sessionId()" [details]="item" [arguments]="arguments()" />
+  }
+
+  <mat-accordion class="mcp-sections" multi>
+    @if (hasArguments()) {
+      <mat-expansion-panel>
+        <mat-expansion-panel-header>
+          <mat-panel-title>
+            <mat-icon aria-hidden="true">data_object</mat-icon>
+            Arguments
+          </mat-panel-title>
+        </mat-expansion-panel-header>
+        <pre class="mcp-json">{{ arguments() | json }}</pre>
+      </mat-expansion-panel>
+    }
+
+    @if (item.logs.length > 0) {
+      <mat-expansion-panel [expanded]="item.cancelable">
+        <mat-expansion-panel-header>
+          <mat-panel-title>
+            <mat-icon aria-hidden="true">article</mat-icon>
+            Server logs
+          </mat-panel-title>
+          <mat-panel-description>{{ item.logs.length }}</mat-panel-description>
+        </mat-expansion-panel-header>
+        <div class="mcp-logs" aria-live="polite">
+          @for (log of item.logs; track $index) {
+            <div class="mcp-log" [attr.data-level]="log.level">
+              <span>{{ log.level }}</span>
+              @if (log.logger) {
+                <strong>{{ log.logger }}</strong>
+              }
+              @if (logText(log.data); as text) {
+                <span>{{ text }}</span>
+              } @else {
+                <pre>{{ log.data | json }}</pre>
+              }
+            </div>
+          }
+        </div>
+      </mat-expansion-panel>
+    }
+
+    @for (content of item.content; track $index) {
+      @switch (content.type) {
+        @case ('text') {
+          <mat-expansion-panel>
+            <mat-expansion-panel-header>
+              <mat-panel-title>
+                <mat-icon aria-hidden="true">notes</mat-icon>
+                Text result
+              </mat-panel-title>
+            </mat-expansion-panel-header>
+            <div class="mcp-text markdown-body" [innerHTML]="text(content) | markdown"></div>
+          </mat-expansion-panel>
+        }
+        @case ('image') {
+          @if (mediaUrl(content, 'image'); as source) {
+            <figure class="mcp-media">
+              <img [src]="source" [alt]="title(content)" />
+              <figcaption>{{ title(content) }}</figcaption>
+            </figure>
+          }
+        }
+        @case ('audio') {
+          @if (mediaUrl(content, 'audio'); as source) {
+            <div class="mcp-media">
+              <span>{{ title(content) }}</span>
+              <audio controls [src]="source">Audio returned by the MCP server</audio>
+            </div>
+          }
+        }
+        @case ('resource_link') {
+          <div class="mcp-resource">
+            <mat-icon aria-hidden="true">link</mat-icon>
+            <div>
+              @if (webLink(content); as href) {
+                <a [href]="href" target="_blank" rel="noopener noreferrer">{{ title(content) }}</a>
+              } @else {
+                <strong>{{ title(content) }}</strong>
+              }
+              @if (content['description']) {
+                <span>{{ content['description'] }}</span>
+              }
+              <code>{{ content['uri'] }}</code>
+            </div>
+          </div>
+        }
+        @case ('resource') {
+          <div class="mcp-resource">
+            <mat-icon aria-hidden="true">draft</mat-icon>
+            <div>
+              <strong>{{ embeddedURI(content) || 'Embedded resource' }}</strong>
+              @if (embeddedText(content); as resourceText) {
+                <div class="markdown-body" [innerHTML]="resourceText | markdown"></div>
+              } @else if (embeddedMediaUrl(content, 'image'); as source) {
+                <img [src]="source" alt="Embedded MCP resource" />
+              } @else if (embeddedMediaUrl(content, 'audio'); as source) {
+                <audio controls [src]="source">Audio returned by the MCP server</audio>
+              } @else {
+                <pre class="mcp-json">{{ embeddedResource(content) | json }}</pre>
+              }
+            </div>
+          </div>
+        }
+        @default {
+          <pre class="mcp-json">{{ content | json }}</pre>
+        }
+      }
+    }
+
+    @if (item.structuredContent !== undefined) {
+      <mat-expansion-panel>
+        <mat-expansion-panel-header>
+          <mat-panel-title>
+            <mat-icon aria-hidden="true">schema</mat-icon>
+            Structured result
+          </mat-panel-title>
+        </mat-expansion-panel-header>
+        <pre class="mcp-json">{{ item.structuredContent | json }}</pre>
+      </mat-expansion-panel>
+    }
+  </mat-accordion>
+</section>

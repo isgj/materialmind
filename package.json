@@ -1,0 +1,23 @@
+{
+  "name": "materialmind",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "npm@11.16.0",
+  "scripts": {
+    "backend:dev": "go run ./cmd/materialmind",
+    "frontend:dev": "npm --prefix web start",
+    "frontend:build": "npm --prefix web run build",
+    "build": "npm run frontend:build && mkdir -p dist && go build -tags embed_frontend -trimpath -o dist/materialmind ./cmd/materialmind",
+    "build:release": "./scripts/build-release.sh",
+    "start": "./dist/materialmind",
+    "test": "go test ./... && npm --prefix web test -- --watch=false",
+    "test:embedded": "npm run frontend:build && go test -tags embed_frontend ./...",
+    "test:e2e": "npm --prefix web run e2e",
+    "vet": "go vet ./...",
+    "race": "go test -race ./...",
+    "verify": "npm run format:check && npm run vet && npm test && npm run test:embedded && npm run build",
+    "format": "gofumpt -w cmd internal && npm --prefix web exec -- prettier --write --ignore-path web/.prettierignore web",
+    "format:check": "test -z \"$(gofumpt -d cmd internal)\" && npm --prefix web exec -- prettier --check --ignore-path web/.prettierignore web",
+    "clean": "rm -rf dist internal/webui/dist web/.angular web/dist"
+  }
+}

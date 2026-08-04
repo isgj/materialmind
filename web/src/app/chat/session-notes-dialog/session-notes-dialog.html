@@ -1,0 +1,23 @@
+<h2 mat-dialog-title>
+  <mat-icon aria-hidden="true">description</mat-icon>
+  <span>Session notes</span>
+</h2>
+
+<mat-dialog-content>
+  <div class="notes-meta">
+    <span>Revision {{ notes.revision }}</span>
+    @if (notes.updatedAt) {
+      <span>Updated {{ notes.updatedAt | date: 'medium' }}</span>
+    }
+  </div>
+
+  @if (notes.content) {
+    <div class="notes-content markdown-body" [innerHTML]="notes.content | markdown"></div>
+  } @else {
+    <p class="notes-empty">This session does not have notes yet.</p>
+  }
+</mat-dialog-content>
+
+<mat-dialog-actions align="end">
+  <button mat-button type="button" mat-dialog-close>Close</button>
+</mat-dialog-actions>

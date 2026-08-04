@@ -1,0 +1,502 @@
+:host {
+  display: block;
+  height: 100%;
+  overflow: auto;
+}
+
+.settings-page {
+  width: min(1080px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 28px 0 56px;
+}
+
+.page-header,
+.page-title-line,
+.provider-header,
+.provider-title,
+.provider-actions,
+.models-heading,
+.models-heading > div,
+.credential-status,
+.model-settings,
+.model-actions {
+  display: flex;
+  align-items: center;
+}
+
+.page-header {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 20px;
+  margin-bottom: 28px;
+}
+
+.page-title {
+  min-width: 0;
+}
+
+.page-title-line {
+  gap: 8px;
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin: 0;
+}
+
+h1 {
+  font: var(--mat-sys-headline-small);
+}
+
+.page-header p {
+  margin-top: 3px;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.appearance-section {
+  margin-bottom: 32px;
+}
+
+.data-settings {
+  display: grid;
+  border-block: 1px solid var(--mat-sys-outline-variant);
+}
+
+.data-setting-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 32px;
+  padding: 24px 0;
+}
+
+.data-setting-copy {
+  display: grid;
+  max-width: 660px;
+  gap: 5px;
+}
+
+.data-setting-copy h2 {
+  font: var(--mat-sys-title-medium);
+}
+
+.data-setting-copy p {
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-body-medium);
+}
+
+.data-setting-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.data-setting-controls mat-form-field {
+  width: 210px;
+}
+
+.settings-section {
+  margin-bottom: 32px;
+}
+
+.models-heading h3 {
+  font: var(--mat-sys-title-medium);
+}
+
+.page-count,
+.models-heading > div > span {
+  min-width: 22px;
+  border-radius: 4px;
+  background: var(--mat-sys-secondary-container);
+  color: var(--mat-sys-on-secondary-container);
+  font-size: 12px;
+  line-height: 22px;
+  text-align: center;
+}
+
+.provider-list {
+  display: grid;
+  gap: 16px;
+}
+
+.provider-card {
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.provider-card mat-card-content {
+  padding: 20px;
+}
+
+.provider-header {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.provider-title {
+  min-width: 0;
+  gap: 12px;
+}
+
+.provider-title > div {
+  min-width: 0;
+}
+
+.provider-title h2 {
+  overflow-wrap: anywhere;
+  font: var(--mat-sys-title-large);
+}
+
+.provider-icon {
+  display: grid;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  background: var(--mat-sys-primary-container);
+  color: var(--mat-sys-on-primary-container);
+  place-items: center;
+}
+
+.compatibility {
+  color: var(--mat-sys-on-surface-variant);
+  font-size: 13px;
+  text-transform: capitalize;
+}
+
+.provider-actions,
+.model-actions {
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.connection-details {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  gap: 20px;
+  margin: 20px 0;
+}
+
+.runtime-connection-details {
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-bottom: 0;
+}
+
+.mcp-connection-details {
+  grid-template-columns: minmax(0, 1.4fr) minmax(180px, 0.7fr);
+  margin-bottom: 16px;
+}
+
+.mcp-connection-details .credential-status {
+  grid-column: 1 / -1;
+  align-items: flex-start;
+  align-self: start;
+  min-width: 0;
+}
+
+.mcp-connection-details .credential-status span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mcp-connection-details code {
+  word-break: normal;
+}
+
+.runtime-details {
+  margin-top: 16px;
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-body-medium);
+}
+
+.connection-item {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.connection-item > span {
+  color: var(--mat-sys-on-surface-variant);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+code {
+  color: var(--mat-sys-on-surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.credential-status {
+  align-self: center;
+  gap: 7px;
+  color: var(--mat-sys-on-surface-variant);
+  font-size: 13px;
+}
+
+.credential-status mat-icon {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  font-size: 20px;
+}
+
+.credential-status.ready {
+  color: var(--mat-sys-primary);
+}
+
+.credential-status.missing {
+  color: var(--mat-sys-error);
+}
+
+.mcp-scopes {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 16px;
+  color: var(--mat-sys-on-surface-variant);
+  font-size: 12px;
+}
+
+.mcp-default-policy {
+  display: grid;
+  gap: 14px;
+  margin: 16px 0;
+  border-radius: 6px;
+  background: var(--mat-sys-surface-container-low);
+  padding: 14px 16px;
+}
+
+.mcp-default-heading {
+  display: grid;
+  gap: 2px;
+}
+
+.mcp-default-heading h3 {
+  font: var(--mat-sys-title-small);
+}
+
+.mcp-default-heading p {
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-body-small);
+}
+
+.mcp-default-controls {
+  display: grid;
+  grid-template-columns: auto minmax(220px, 320px) auto;
+  align-items: center;
+  justify-content: start;
+  gap: 12px;
+}
+
+.mcp-default-controls mat-form-field {
+  width: 100%;
+}
+
+.mcp-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 12px;
+}
+
+.spinning {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.models-heading {
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0 8px;
+}
+
+.models-heading > div {
+  gap: 8px;
+}
+
+.model-row {
+  display: grid;
+  grid-template-columns: 28px minmax(180px, 0.8fr) minmax(280px, 1.4fr) 92px;
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+  padding: 8px 0;
+}
+
+.model-icon {
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.model-identity {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.model-identity strong {
+  overflow-wrap: anywhere;
+  font: var(--mat-sys-body-large);
+  font-weight: 600;
+}
+
+.model-settings {
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  min-width: 0;
+  color: var(--mat-sys-on-surface-variant);
+  font-size: 13px;
+}
+
+.model-settings span {
+  white-space: nowrap;
+}
+
+.empty-models {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 72px;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.empty-models mat-icon {
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  border: 1px dashed var(--mat-sys-outline);
+  color: var(--mat-sys-on-surface-variant);
+  padding: 44px 16px;
+}
+
+.empty-state > mat-icon {
+  width: 32px;
+  height: 32px;
+  font-size: 32px;
+}
+
+@media (max-width: 860px) {
+  .connection-details,
+  .mcp-connection-details {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .credential-status {
+    grid-column: 1 / -1;
+  }
+
+  .model-row {
+    grid-template-columns: 28px minmax(150px, 0.8fr) minmax(200px, 1fr) 92px;
+  }
+}
+
+@media (max-width: 680px) {
+  .settings-page {
+    width: min(100% - 24px, 1080px);
+    padding-top: 20px;
+  }
+
+  .page-header {
+    align-items: flex-start;
+  }
+
+  .data-setting-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .data-setting-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .data-setting-controls mat-form-field {
+    width: 100%;
+  }
+
+  .data-setting-row > button {
+    justify-self: start;
+  }
+
+  .provider-card mat-card-content {
+    padding: 16px;
+  }
+
+  .connection-details {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .credential-status {
+    grid-column: auto;
+  }
+
+  .mcp-connection-details .credential-status {
+    grid-column: auto;
+  }
+
+  .mcp-default-controls {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .mcp-default-controls > button {
+    justify-self: start;
+  }
+
+  .model-row {
+    grid-template-columns: 28px minmax(0, 1fr) 88px;
+    align-items: start;
+  }
+
+  .model-settings {
+    grid-column: 2 / -1;
+  }
+
+  .model-actions {
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 480px) {
+  .provider-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .provider-actions {
+    align-self: flex-end;
+  }
+
+  .models-heading {
+    align-items: center;
+  }
+
+  .model-row {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  .model-settings,
+  .model-actions {
+    grid-column: 2;
+  }
+
+  .model-actions {
+    justify-content: flex-end;
+  }
+}

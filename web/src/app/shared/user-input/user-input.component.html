@@ -1,0 +1,68 @@
+<section class="user-input" aria-label="Questions from the agent">
+  @if (request().status === 'answered') {
+    <div class="answer-summary" role="status">
+      @for (question of request().questions; track question.id) {
+        <div class="answer-row">
+          <span>{{ question.question }}</span>
+          <div>
+            <mat-icon aria-hidden="true">check_circle</mat-icon>
+            <strong>{{ answerFor(question) }}</strong>
+          </div>
+        </div>
+      }
+    </div>
+  } @else {
+    <form (submit)="submit($event)">
+      <div class="questions">
+        @for (question of request().questions; track question.id; let questionIndex = $index) {
+          <fieldset>
+            <legend>{{ question.question }}</legend>
+            @let answerField = answersForm.answers[questionIndex];
+            @if (question.options.length > 0) {
+              <mat-radio-group
+                class="question-options"
+                [attr.aria-label]="question.question"
+                [formField]="answerField.optionId"
+                (change)="chooseOption(question.id, $event)"
+              >
+                @for (option of question.options; track option.id) {
+                  <mat-radio-button [value]="option.id">
+                    <span class="option-copy">
+                      <strong>{{ option.label }}</strong>
+                      @if (option.description) {
+                        <span>{{ option.description }}</span>
+                      }
+                    </span>
+                  </mat-radio-button>
+                }
+              </mat-radio-group>
+            }
+            <mat-form-field appearance="outline" subscriptSizing="dynamic">
+              <mat-label>{{
+                question.options.length > 0 ? 'Other response' : 'Your response'
+              }}</mat-label>
+              <textarea
+                matInput
+                rows="2"
+                [formField]="answerField.text"
+                (input)="chooseCustom(question.id)"
+              ></textarea>
+              @if (answerField.text().touched() && answerField.text().invalid()) {
+                <mat-error>Response must be at most 2000 characters</mat-error>
+              }
+            </mat-form-field>
+          </fieldset>
+        }
+      </div>
+      <div class="user-input-actions">
+        <button mat-flat-button type="submit" [disabled]="!canSubmit()">
+          <mat-icon>send</mat-icon>
+          Send answers
+        </button>
+        @if (request().status === 'submitting') {
+          <mat-spinner diameter="18" aria-label="Submitting answers"></mat-spinner>
+        }
+      </div>
+    </form>
+  }
+</section>

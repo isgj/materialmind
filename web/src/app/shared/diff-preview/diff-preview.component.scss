@@ -1,0 +1,129 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+
+.diff-preview {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.diff-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-label-medium);
+}
+
+.diff-title {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.diff-title code {
+  overflow-wrap: anywhere;
+  color: var(--mat-sys-on-surface);
+  font: inherit;
+}
+
+.diff-title span {
+  color: var(--mat-sys-primary);
+  font: var(--mat-sys-label-small);
+}
+
+.diff-stats {
+  display: inline-flex;
+  gap: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.addition-count {
+  color: var(--mat-sys-primary);
+}
+
+.deletion-count {
+  color: var(--mat-sys-error);
+}
+
+.diff-lines {
+  max-height: 360px;
+  overflow: auto;
+  border-radius: 4px;
+  background: var(--mat-sys-surface-container-low);
+  color: var(--mat-sys-on-surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.diff-lines:focus-visible {
+  outline: 2px solid var(--mat-sys-primary);
+  outline-offset: 2px;
+}
+
+.diff-content {
+  width: max-content;
+  min-width: 100%;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 42px 42px 20px minmax(max-content, 1fr);
+  box-sizing: border-box;
+  min-height: 20px;
+}
+
+.diff-line.added {
+  background: var(--mat-sys-secondary-container);
+  color: var(--mat-sys-on-secondary-container);
+}
+
+.diff-line.removed {
+  background: var(--mat-sys-error-container);
+  color: var(--mat-sys-on-error-container);
+}
+
+.line-number {
+  padding-inline: 6px;
+  color: var(--mat-sys-on-surface-variant);
+  text-align: right;
+  user-select: none;
+}
+
+.line-symbol {
+  text-align: center;
+  user-select: none;
+}
+
+.diff-line code {
+  padding-right: 12px;
+  font: inherit;
+  white-space: pre;
+}
+
+.diff-meta {
+  min-width: max-content;
+  padding: 3px 10px;
+  background: var(--mat-sys-surface-container-high);
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.diff-meta.note {
+  font-style: italic;
+}
+
+.diff-empty {
+  padding: 8px 10px;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+@media (max-width: 640px) {
+  .diff-line {
+    grid-template-columns: 34px 34px 18px minmax(max-content, 1fr);
+  }
+}

@@ -1,0 +1,46 @@
+<section class="diff-preview" [attr.aria-label]="'Proposed changes to ' + path()">
+  <div class="diff-summary">
+    <span class="diff-title">
+      <code>{{ path() }}</code>
+      <span>{{ operationLabel() }}</span>
+    </span>
+    <span
+      class="diff-stats"
+      [attr.aria-label]="additions() + ' additions and ' + deletions() + ' deletions'"
+    >
+      <span class="addition-count" aria-hidden="true">+{{ additions() }}</span>
+      <span class="deletion-count" aria-hidden="true">-{{ deletions() }}</span>
+    </span>
+  </div>
+  <div class="diff-lines" role="region" tabindex="0" [attr.aria-label]="'Diff for ' + path()">
+    <div class="diff-content">
+      @if (lines().length === 0) {
+        <div class="diff-empty">Empty file</div>
+      } @else {
+        @for (line of highlightedLines(); track $index) {
+          @if (line.kind === 'hunk' || line.kind === 'note') {
+            <div class="diff-meta" [class.note]="line.kind === 'note'">{{ line.content }}</div>
+          } @else {
+            <div
+              class="diff-line"
+              [class.added]="line.kind === 'added'"
+              [class.removed]="line.kind === 'removed'"
+            >
+              <span class="line-number">{{ line.oldLine ?? '' }}</span>
+              <span class="line-number">{{ line.newLine ?? '' }}</span>
+              <span class="line-symbol" aria-hidden="true">{{ line.symbol }}</span>
+              @if (line.highlightedContent !== null) {
+                <code
+                  class="syntax-highlighted"
+                  [innerHTML]="line.highlightedContent || ' '"
+                ></code>
+              } @else {
+                <code>{{ line.content || ' ' }}</code>
+              }
+            </div>
+          }
+        }
+      }
+    </div>
+  </div>
+</section>

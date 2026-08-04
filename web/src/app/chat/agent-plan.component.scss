@@ -1,0 +1,199 @@
+:host {
+  position: absolute;
+  z-index: 1;
+  inset: 0 0 auto;
+  display: block;
+  width: min(1120px, calc(100% - 40px));
+  margin: 0 auto;
+  padding-top: 12px;
+}
+
+.plan-panel {
+  overflow: hidden;
+  border: 1px solid var(--mat-sys-outline-variant);
+  --mat-expansion-container-background-color: var(--mat-sys-surface);
+  --mat-expansion-container-elevation-shadow: none;
+  --mat-expansion-container-shape: 8px;
+}
+
+mat-expansion-panel-header {
+  min-height: 84px;
+  height: auto;
+  padding: 10px 20px;
+  background: var(--mat-sys-surface-container-low);
+}
+
+mat-expansion-panel-header:hover,
+mat-expansion-panel-header:focus-visible {
+  background: var(--mat-sys-surface-container);
+}
+
+.plan-heading {
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 14px;
+  margin-inline-end: 20px;
+}
+
+.plan-icon {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  color: var(--mat-sys-primary);
+  font-size: 24px;
+}
+
+.plan-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.plan-title {
+  overflow: hidden;
+  color: var(--mat-sys-on-surface);
+  font: var(--mat-sys-title-medium);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-label {
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-body-medium);
+  white-space: nowrap;
+}
+
+.plan-progress {
+  width: clamp(92px, 14vw, 160px);
+  flex: 0 0 auto;
+  align-items: center;
+  margin-inline: 0 10px;
+}
+
+.plan-progress mat-progress-bar {
+  width: 100%;
+  --mat-progress-bar-active-indicator-height: 6px;
+  --mat-progress-bar-track-height: 6px;
+}
+
+.plan-entries {
+  display: grid;
+  max-height: min(50dvh, 440px);
+  gap: 8px;
+  margin: 0;
+  padding: 16px 4px 4px 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  list-style: none;
+}
+
+.plan-entries li {
+  display: grid;
+  min-height: 44px;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  color: var(--mat-sys-on-surface);
+  font: var(--mat-sys-body-medium);
+}
+
+.plan-entries mat-icon {
+  width: 22px;
+  height: 22px;
+  color: var(--mat-sys-outline);
+  font-size: 22px;
+}
+
+.plan-entries .completed-entry {
+  background: var(--mat-sys-surface-container);
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.completed-entry .entry-content {
+  text-decoration: line-through;
+}
+
+.plan-entries .current-entry {
+  border-color: var(--mat-sys-primary);
+  background: var(--mat-sys-surface-container-lowest);
+  color: var(--mat-sys-primary);
+  font-weight: 600;
+}
+
+.plan-entries .status-complete,
+.plan-entries .status-current {
+  color: var(--mat-sys-primary);
+}
+
+.entry-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.entry-content {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.status-current {
+  animation: plan-progress 1.5s linear infinite;
+}
+
+@keyframes plan-progress {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 640px) {
+  :host {
+    width: calc(100% - 24px);
+    padding-top: 8px;
+  }
+
+  mat-expansion-panel-header {
+    min-height: 76px;
+    padding-inline: 14px;
+  }
+
+  .plan-heading {
+    gap: 10px;
+    margin-inline-end: 8px;
+  }
+
+  .plan-title {
+    font: var(--mat-sys-title-small);
+    font-weight: 600;
+  }
+
+  .progress-label {
+    font: var(--mat-sys-body-small);
+  }
+
+  .plan-progress {
+    width: 84px;
+    margin-inline-end: 2px;
+  }
+
+  .plan-entries {
+    padding-top: 12px;
+  }
+}
+
+@media (max-width: 440px) {
+  .plan-progress {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-current {
+    animation: none;
+  }
+}

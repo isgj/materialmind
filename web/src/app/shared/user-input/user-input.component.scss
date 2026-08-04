@@ -1,0 +1,84 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+
+.user-input form,
+.questions,
+.answer-summary {
+  display: grid;
+  gap: 20px;
+}
+
+fieldset {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  margin: 0;
+}
+
+legend {
+  color: var(--mat-sys-on-surface);
+  font: var(--mat-sys-title-small);
+}
+
+.question-options {
+  display: grid;
+  align-items: start;
+  gap: 4px;
+}
+
+mat-radio-button {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.option-copy {
+  display: inline-grid;
+  gap: 2px;
+  padding-block: 6px;
+  white-space: normal;
+}
+
+.option-copy strong {
+  font: var(--mat-sys-body-medium);
+  font-weight: 500;
+}
+
+.option-copy > span {
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-body-small);
+}
+
+mat-form-field {
+  width: min(100%, 720px);
+}
+
+.user-input-actions,
+.answer-row > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.answer-row {
+  display: grid;
+  gap: 6px;
+}
+
+.answer-row > span {
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-body-small);
+}
+
+.answer-row mat-icon {
+  color: var(--mat-sys-primary);
+}
+
+.answer-row strong {
+  overflow-wrap: anywhere;
+  font: var(--mat-sys-body-medium);
+  font-weight: 500;
+}

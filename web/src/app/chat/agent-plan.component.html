@@ -1,0 +1,38 @@
+<mat-expansion-panel class="plan-panel" aria-label="Project execution plan">
+  <mat-expansion-panel-header>
+    <mat-panel-title class="plan-heading">
+      <mat-icon class="plan-icon" aria-hidden="true">assignment</mat-icon>
+      <span class="plan-copy">
+        <span class="plan-title">Project Execution Plan</span>
+        <span class="progress-label">{{ progressLabel() }}</span>
+      </span>
+    </mat-panel-title>
+    <mat-panel-description class="plan-progress">
+      <mat-progress-bar
+        mode="determinate"
+        [value]="progress()"
+        [attr.aria-label]="'Plan progress: ' + progressLabel()"
+      />
+    </mat-panel-description>
+  </mat-expansion-panel-header>
+
+  <ol class="plan-entries">
+    @for (entry of plan().entries; track $index) {
+      <li
+        [class.completed-entry]="entry.status === 'completed'"
+        [class.current-entry]="entry.status === 'in_progress'"
+      >
+        <mat-icon
+          [class.status-complete]="entry.status === 'completed'"
+          [class.status-current]="entry.status === 'in_progress'"
+          [matTooltip]="statusLabel(entry.status)"
+          [attr.aria-label]="statusLabel(entry.status)"
+          >{{ statusIcon(entry) }}</mat-icon
+        >
+        <span class="entry-copy">
+          <span class="entry-content">{{ entry.content }}</span>
+        </span>
+      </li>
+    }
+  </ol>
+</mat-expansion-panel>

@@ -1,0 +1,89 @@
+<section class="approval-request" [attr.aria-label]="prompt()">
+  <div class="approval-target">
+    <mat-icon aria-hidden="true">{{ icon() }}</mat-icon>
+    <div>
+      <span>{{ prompt() }}</span>
+      @if (showTarget()) {
+        <span class="target-label">{{ targetLabel() }}</span>
+        <code>{{ target() }}</code>
+      }
+    </div>
+  </div>
+
+  <ng-content></ng-content>
+
+  @if (approval().status === 'pending' || approval().status === 'submitting') {
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>Reason for refusing (optional)</mat-label>
+      <textarea matInput rows="2" [formField]="refusalForm.reason"></textarea>
+    </mat-form-field>
+    <div class="approval-actions">
+      @if (approval().options?.length) {
+        @for (option of approval().options; track option.id; let first = $first) {
+          @if (first) {
+            <button
+              mat-flat-button
+              type="button"
+              class="approval-option-button"
+              [disabled]="approval().status === 'submitting'"
+              [attr.aria-label]="option.name"
+              (click)="decideOption(option)"
+            >
+              <mat-icon>{{ optionIcon(option) }}</mat-icon>
+              <span class="approval-option-label">{{ option.name }}</span>
+            </button>
+          } @else {
+            <button
+              mat-button
+              type="button"
+              class="approval-option-button"
+              [disabled]="approval().status === 'submitting'"
+              [attr.aria-label]="option.name"
+              (click)="decideOption(option)"
+            >
+              <mat-icon>{{ optionIcon(option) }}</mat-icon>
+              <span class="approval-option-label">{{ option.name }}</span>
+            </button>
+          }
+        }
+      } @else {
+        <button
+          mat-flat-button
+          type="button"
+          [disabled]="approval().status === 'submitting'"
+          (click)="decide(true)"
+        >
+          <mat-icon>check</mat-icon>
+          Yes
+        </button>
+        <button
+          mat-button
+          type="button"
+          [disabled]="approval().status === 'submitting'"
+          (click)="decide(false)"
+        >
+          <mat-icon>close</mat-icon>
+          No
+        </button>
+      }
+      @if (approval().status === 'submitting') {
+        <mat-spinner diameter="18" aria-label="Submitting decision"></mat-spinner>
+      }
+    </div>
+  } @else {
+    <div
+      class="approval-resolution"
+      [class.approved]="approval().status === 'approved'"
+      [class.executing]="approval().status === 'executing'"
+      [class.denied]="approval().status === 'denied'"
+      role="status"
+    >
+      @if (approval().status === 'executing') {
+        <mat-spinner diameter="18" aria-label="Action running"></mat-spinner>
+      } @else {
+        <mat-icon>{{ approval().status === 'approved' ? 'check_circle' : 'cancel' }}</mat-icon>
+      }
+      <span>{{ resolutionText() }}</span>
+    </div>
+  }
+</section>

@@ -1,0 +1,6 @@
+dist/
+internal/webui/dist/
+web/.angular/
+web/dist/
+web/node_modules/
+web/AGENTS.md

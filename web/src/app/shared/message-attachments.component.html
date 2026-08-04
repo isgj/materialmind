@@ -1,0 +1,26 @@
+<mat-chip-set class="attachment-list" aria-label="Attached files">
+  @for (attachment of attachments(); track attachment.id) {
+    @if (removable()) {
+      <mat-chip-row [matTooltip]="tooltip(attachment)" (removed)="removed.emit(attachment.id)">
+        @if (isImage(attachment)) {
+          <img matChipAvatar [src]="imageSource(attachment)" alt="" />
+        } @else {
+          <mat-icon matChipAvatar aria-hidden="true">{{ fileIcon(attachment) }}</mat-icon>
+        }
+        <span class="attachment-name">{{ attachment.name }}</span>
+        <button matChipRemove [attr.aria-label]="'Remove ' + attachment.name">
+          <mat-icon>close</mat-icon>
+        </button>
+      </mat-chip-row>
+    } @else {
+      <mat-chip [matTooltip]="tooltip(attachment)">
+        @if (isImage(attachment)) {
+          <img matChipAvatar [src]="imageSource(attachment)" alt="" />
+        } @else {
+          <mat-icon matChipAvatar aria-hidden="true">{{ fileIcon(attachment) }}</mat-icon>
+        }
+        <span class="attachment-name">{{ attachment.name }}</span>
+      </mat-chip>
+    }
+  }
+</mat-chip-set>

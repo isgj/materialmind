@@ -1,0 +1,181 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+
+.mcp-details {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.mcp-source,
+.mcp-progress,
+.mcp-error-summary,
+.mcp-resource,
+.mcp-log {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcp-source {
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-label-medium);
+}
+
+.mcp-source mat-icon,
+.mcp-resource > mat-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  font-size: 18px;
+}
+
+.mcp-source strong {
+  overflow: hidden;
+  color: var(--mat-sys-on-surface);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-body-small);
+}
+
+.mcp-progress mat-progress-bar {
+  grid-column: 1 / -1;
+}
+
+.mcp-error-summary {
+  color: var(--mat-sys-error);
+  font: var(--mat-sys-body-small);
+}
+
+.mcp-error-summary mat-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  font-size: 18px;
+}
+
+.mcp-sections {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.mcp-sections mat-expansion-panel {
+  --mat-expansion-container-background-color: var(--mat-sys-surface-container);
+  --mat-expansion-container-elevation-shadow: none;
+  --mat-expansion-container-shape: 4px;
+}
+
+.mcp-sections mat-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: var(--mat-sys-label-large);
+}
+
+.mcp-sections mat-panel-title mat-icon {
+  width: 18px;
+  height: 18px;
+  font-size: 18px;
+}
+
+.mcp-json,
+.mcp-log pre {
+  max-height: 280px;
+  overflow: auto;
+  margin: 0;
+  color: var(--mat-sys-on-surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.mcp-logs {
+  display: grid;
+  gap: 8px;
+}
+
+.mcp-log {
+  align-items: baseline;
+  font: var(--mat-sys-body-small);
+}
+
+.mcp-log > span:first-child {
+  min-width: 52px;
+  color: var(--mat-sys-primary);
+  font: var(--mat-sys-label-small);
+  text-transform: uppercase;
+}
+
+.mcp-log[data-level='error'] > span:first-child,
+.mcp-log[data-level='critical'] > span:first-child,
+.mcp-log[data-level='alert'] > span:first-child,
+.mcp-log[data-level='emergency'] > span:first-child,
+.mcp-error .mcp-source {
+  color: var(--mat-sys-error);
+}
+
+.mcp-log pre {
+  flex: 1 1 auto;
+}
+
+.mcp-text {
+  color: var(--mat-sys-on-surface);
+  font: var(--mat-sys-body-medium);
+}
+
+.mcp-media {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  margin: 0;
+}
+
+.mcp-media img,
+.mcp-resource img {
+  max-width: min(100%, 720px);
+  max-height: 420px;
+  object-fit: contain;
+}
+
+.mcp-media audio,
+.mcp-resource audio {
+  width: min(100%, 520px);
+}
+
+.mcp-media figcaption,
+.mcp-media > span {
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-label-small);
+}
+
+.mcp-resource {
+  align-items: flex-start;
+}
+
+.mcp-resource > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.mcp-resource a {
+  color: var(--mat-sys-primary);
+}
+
+.mcp-resource span,
+.mcp-resource code {
+  overflow-wrap: anywhere;
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-body-small);
+}

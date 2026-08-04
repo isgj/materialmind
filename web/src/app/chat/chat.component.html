@@ -1,0 +1,392 @@
+<main class="chat-page" [attr.aria-busy]="loading() || !!activeRun()">
+  @if (loading()) {
+    <mat-progress-bar class="chat-progress" mode="indeterminate"></mat-progress-bar>
+  }
+
+  @if (visiblePlan(); as plan) {
+    <div class="plan-region">
+      <app-agent-plan [plan]="plan" />
+    </div>
+  }
+
+  <div #scrollRegion class="transcript" aria-live="polite">
+    <div class="transcript-inner">
+      @if (olderTranscriptCursor() !== null) {
+        <div class="older-transcript-action">
+          <button
+            mat-button
+            type="button"
+            [disabled]="loadingOlderTranscript()"
+            (click)="loadOlderTranscript()"
+          >
+            <mat-icon [class.spinning]="loadingOlderTranscript()">{{
+              loadingOlderTranscript() ? 'progress_activity' : 'history'
+            }}</mat-icon>
+            {{ loadingOlderTranscript() ? 'Loading' : 'Load older' }}
+          </button>
+        </div>
+      }
+      @for (entry of timeline(); track entry.id) {
+        @switch (entry.kind) {
+          @case ('message') {
+            @let item = entry.message;
+            <article class="message" [class.user-message]="item.role === 'user'">
+              <div class="message-meta">
+                <span>{{ item.role === 'user' ? 'You' : 'Agent' }}</span>
+                @if (item.role === 'assistant' && item.model) {
+                  <span>{{ item.model }}</span>
+                }
+                <time [attr.datetime]="item.createdAt">{{
+                  item.createdAt | date: 'shortTime'
+                }}</time>
+                @if (item.role === 'assistant' && item.text) {
+                  <button
+                    mat-icon-button
+                    type="button"
+                    class="copy-markdown-action"
+                    matTooltip="Copy as Markdown"
+                    aria-label="Copy response as Markdown"
+                    (click)="copyMarkdown(item.text)"
+                  >
+                    <mat-icon>content_copy</mat-icon>
+                  </button>
+                }
+              </div>
+              @if (item.text) {
+                <div class="message-text markdown-body" [innerHTML]="item.text | markdown"></div>
+              }
+              @if (item.attachments?.length) {
+                <app-message-attachments [attachments]="item.attachments" />
+              }
+            </article>
+          }
+          @case ('activity') {
+            <app-agent-activity
+              [sessionId]="sessionId()"
+              [steps]="entry.steps"
+            ></app-agent-activity>
+          }
+          @case ('note') {
+            <app-agent-note [text]="entry.text" />
+          }
+          @case ('subagent') {
+            <app-agent-delegation [sessionId]="sessionId()" [delegation]="entry.delegation" />
+          }
+        }
+      } @empty {
+        @if (!loading() && !pendingUserText()) {
+          <div class="empty-conversation">
+            <mat-icon>forum</mat-icon>
+            <strong>New session</strong>
+            <span>{{ workspace()?.name }}</span>
+          </div>
+        }
+      }
+
+      @if (pendingUserText() || pendingMessageAttachments().length > 0) {
+        <article class="message user-message pending-message">
+          <div class="message-meta"><span>You</span><span>Sending</span></div>
+          @if (pendingUserText()) {
+            <div
+              class="message-text markdown-body"
+              [innerHTML]="pendingUserText() | markdown"
+            ></div>
+          }
+          @if (pendingMessageAttachments().length > 0) {
+            <app-message-attachments [attachments]="pendingMessageAttachments()" />
+          }
+        </article>
+      }
+
+      @for (entry of liveTimeline(); track entry.id) {
+        @switch (entry.kind) {
+          @case ('note') {
+            <app-agent-note [text]="entry.text" />
+          }
+          @case ('activity') {
+            <app-agent-activity
+              [sessionId]="sessionId()"
+              [steps]="entry.steps"
+              [running]="entry.running"
+              (approvalDecision)="resolveToolApproval($event)"
+              (userInputSubmission)="resolveUserInput($event)"
+              (mcpElicitationSubmission)="resolveMCPElicitation($event)"
+              (mcpCancellation)="cancelMCPToolCall($event)"
+            />
+          }
+          @case ('subagent') {
+            <app-agent-delegation
+              [sessionId]="sessionId()"
+              [delegation]="entry.delegation"
+              (approvalDecision)="resolveToolApproval($event)"
+              (userInputSubmission)="resolveUserInput($event)"
+              (mcpElicitationSubmission)="resolveMCPElicitation($event)"
+              (mcpCancellation)="cancelMCPToolCall($event)"
+            />
+          }
+        }
+      }
+
+      @if (activeRun()) {
+        <article class="message streaming-message">
+          <div class="message-meta">
+            <span>Agent</span>
+            <span>{{ activeRun()?.acpAgentName || activeRun()?.modelId }}</span>
+            <span class="stream-state" [class.connected]="streamConnected()"></span>
+            @if (streamedText()) {
+              <button
+                mat-icon-button
+                type="button"
+                class="copy-markdown-action"
+                matTooltip="Copy as Markdown"
+                aria-label="Copy response as Markdown"
+                (click)="copyMarkdown(streamedText())"
+              >
+                <mat-icon>content_copy</mat-icon>
+              </button>
+            }
+          </div>
+          @if (streamedText()) {
+            <div class="message-text markdown-body" [innerHTML]="streamedText() | markdown"></div>
+          } @else {
+            <div class="thinking-row" aria-label="Agent is working">
+              <span></span><span></span><span></span>
+            </div>
+          }
+        </article>
+      }
+    </div>
+    <div #transcriptEnd class="transcript-end" aria-hidden="true"></div>
+  </div>
+
+  @if (credentialWarning(); as warning) {
+    <div class="credential-warning" role="status">
+      <mat-icon>warning</mat-icon>
+      <span>{{ warning }}</span>
+    </div>
+  }
+
+  <form class="composer" (submit)="$event.preventDefault(); send()">
+    <input #fileInput type="file" multiple hidden (change)="attachSelectedFiles(fileInput)" />
+
+    @if (showComposerToolbar()) {
+      <div class="composer-toolbar">
+        <div class="composer-config-controls">
+          @if (isAcpSession()) {
+            @for (option of acpPrimaryConfigOptions(); track option.id) {
+              @if (option.type === 'select') {
+                <mat-form-field
+                  appearance="fill"
+                  subscriptSizing="dynamic"
+                  class="composer-config-field"
+                  [matTooltip]="option.description || option.name"
+                >
+                  <mat-select
+                    [attr.aria-label]="option.name"
+                    [value]="option.currentValue"
+                    [disabled]="!!activeRun()"
+                    (selectionChange)="selectAcpConfigOption(option, $event)"
+                  >
+                    <mat-select-trigger>
+                      <mat-icon aria-hidden="true">
+                        {{ option.category === 'model' ? 'bolt' : 'psychology' }}
+                      </mat-icon>
+                      <span>{{ acpConfigValueLabel(option) }}</span>
+                    </mat-select-trigger>
+                    @for (value of acpSelectValues(option); track value.value) {
+                      <mat-option [value]="value.value">{{ value.name }}</mat-option>
+                    }
+                  </mat-select>
+                </mat-form-field>
+              } @else {
+                <mat-slide-toggle
+                  class="composer-config-toggle"
+                  [checked]="option.currentValue"
+                  [disabled]="!!activeRun()"
+                  [matTooltip]="option.description || option.name"
+                  (change)="toggleAcpConfigOption(option, $event)"
+                >
+                  {{ option.name }}
+                </mat-slide-toggle>
+              }
+            }
+          } @else {
+            <mat-form-field
+              appearance="fill"
+              subscriptSizing="dynamic"
+              class="composer-model-field"
+            >
+              <mat-select
+                aria-label="Model"
+                [value]="selectedModelId()"
+                [disabled]="!!activeRun()"
+                (selectionChange)="selectModel($event)"
+              >
+                <mat-select-trigger>
+                  <mat-icon aria-hidden="true">bolt</mat-icon>
+                  <span>{{ selectedModel()?.name ?? 'Model' }}</span>
+                </mat-select-trigger>
+                @for (provider of state.llmProviders(); track provider.id) {
+                  @if (modelsForProvider(provider.id).length > 0) {
+                    <mat-optgroup [label]="provider.name">
+                      @for (model of modelsForProvider(provider.id); track model.id) {
+                        <mat-option [value]="model.id">{{ model.name }}</mat-option>
+                      }
+                    </mat-optgroup>
+                  }
+                }
+              </mat-select>
+            </mat-form-field>
+
+            @if (supportsReasoningEffort()) {
+              <mat-form-field
+                appearance="fill"
+                subscriptSizing="dynamic"
+                class="composer-reasoning-field"
+                [matTooltip]="reasoningEffortTooltip()"
+              >
+                <mat-select
+                  aria-label="Reasoning effort"
+                  [value]="selectedReasoningEffort()"
+                  [disabled]="!!activeRun()"
+                  (selectionChange)="selectReasoningEffort($event)"
+                >
+                  <mat-select-trigger>
+                    <mat-icon aria-hidden="true">psychology</mat-icon>
+                    <span>{{ reasoningEffortTriggerLabel() }}</span>
+                  </mat-select-trigger>
+                  <mat-option value="model-default">{{ reasoningEffortDefaultLabel() }}</mat-option>
+                  @for (option of reasoningEffortOptions(); track option.value) {
+                    <mat-option [value]="option.value">{{ option.label }}</mat-option>
+                  }
+                </mat-select>
+              </mat-form-field>
+            }
+          }
+        </div>
+
+        <div class="composer-toolbar-actions">
+          @if (isAcpSession() && acpUsage(); as usage) {
+            <span
+              class="composer-context-usage"
+              [matTooltip]="'Context: ' + usage.used + ' of ' + usage.size + ' tokens'"
+              [attr.aria-label]="'Context: ' + usage.used + ' of ' + usage.size + ' tokens'"
+            >
+              <mat-progress-spinner
+                mode="determinate"
+                diameter="28"
+                strokeWidth="3"
+                [value]="usage.percentage"
+                aria-hidden="true"
+              ></mat-progress-spinner>
+            </span>
+          }
+          @if (hasSessionNotes()) {
+            <button
+              mat-icon-button
+              type="button"
+              matTooltip="View session notes"
+              aria-label="View session notes"
+              (click)="openSessionNotes()"
+            >
+              <mat-icon>description</mat-icon>
+            </button>
+          }
+          @if (isAcpSession() && acpSecondaryConfigOptions().length > 0) {
+            <button
+              mat-icon-button
+              type="button"
+              class="composer-options-action"
+              [disabled]="!!activeRun()"
+              matTooltip="ACP session options"
+              aria-label="ACP session options"
+              (click)="openAcpSessionOptions()"
+            >
+              <mat-icon>tune</mat-icon>
+            </button>
+          }
+        </div>
+      </div>
+    }
+
+    <div
+      class="composer-surface"
+      [class.multiline]="composerMultiline()"
+      [class.has-attachments]="composerAttachments().length > 0"
+    >
+      @if (composerAttachments().length > 0) {
+        <app-message-attachments
+          class="composer-attachments"
+          [attachments]="composerAttachments()"
+          [removable]="true"
+          (removed)="removeComposerAttachment($event)"
+        />
+      }
+
+      <button
+        mat-icon-button
+        type="button"
+        class="context-action"
+        [matMenuTriggerFor]="contextMenu"
+        matTooltip="Add context"
+        aria-label="Add context"
+      >
+        <mat-icon>add</mat-icon>
+      </button>
+
+      <textarea
+        #composerTextarea
+        matInput
+        cdkTextareaAutosize
+        cdkAutosizeMinRows="1"
+        cdkAutosizeMaxRows="8"
+        class="composer-input"
+        [formField]="composerForm.message"
+        placeholder="Ask MaterialMind"
+        aria-label="Prompt"
+        autocomplete="off"
+        wrap="soft"
+        (input)="updateComposerLayout(composerTextarea)"
+        (keydown)="handleComposerKeydown($event)"
+        (paste)="handleComposerPaste($event)"
+      ></textarea>
+
+      <div class="composer-actions">
+        @if (activeRun()) {
+          <button
+            mat-mini-fab
+            type="button"
+            class="composer-run-action stop-action"
+            matTooltip="Stop"
+            aria-label="Stop agent"
+            (click)="cancel()"
+          >
+            <mat-icon>stop</mat-icon>
+          </button>
+        } @else if (hasComposerContent()) {
+          <button
+            mat-mini-fab
+            type="submit"
+            class="composer-run-action send-action"
+            matTooltip="Send"
+            aria-label="Send prompt"
+            [disabled]="!canSend()"
+          >
+            <mat-icon>arrow_upward</mat-icon>
+          </button>
+        }
+      </div>
+    </div>
+
+    <mat-menu #contextMenu="matMenu">
+      <button mat-menu-item type="button" (click)="fileInput.click()">
+        <mat-icon>upload_file</mat-icon>
+        <span>Select file</span>
+      </button>
+      <button mat-menu-item type="button" [disabled]="!!activeRun()" (click)="openMcpContext()">
+        <mat-icon>extension</mat-icon>
+        <span>MCP context</span>
+      </button>
+    </mat-menu>
+  </form>
+</main>

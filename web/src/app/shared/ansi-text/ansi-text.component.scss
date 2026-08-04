@@ -1,0 +1,35 @@
+:host {
+  display: contents;
+  --ansi-black: light-dark(#3f3038, #ccb9c3);
+  --ansi-red: light-dark(#a12235, #ffb4ab);
+  --ansi-green: light-dark(#276b35, #a7e3ad);
+  --ansi-yellow: light-dark(#755b00, #f4d36f);
+  --ansi-blue: light-dark(#2258a8, #aec6ff);
+  --ansi-magenta: light-dark(#7b367f, #e7b6eb);
+  --ansi-cyan: light-dark(#006a6c, #8fdddd);
+  --ansi-white: light-dark(#58444f, #eedfe6);
+  --ansi-bright-black: light-dark(#5f4c56, #d5c3cc);
+  --ansi-bright-red: light-dark(#b3263e, #ffb4ab);
+  --ansi-bright-green: light-dark(#1f6f32, #baf0bf);
+  --ansi-bright-yellow: light-dark(#6f5900, #ffe08a);
+  --ansi-bright-blue: light-dark(#155db1, #c5d8ff);
+  --ansi-bright-magenta: light-dark(#82418d, #f2c5f5);
+  --ansi-bright-cyan: light-dark(#006c70, #a5eeee);
+  --ansi-bright-white: light-dark(#2c2027, #ffffff);
+}
+
+.ansi-bold {
+  font-weight: 700;
+}
+
+.ansi-dim {
+  opacity: 0.65;
+}
+
+.ansi-italic {
+  font-style: italic;
+}
+
+.ansi-hidden {
+  visibility: hidden;
+}

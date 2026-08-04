@@ -1,0 +1,77 @@
+@let item = delegation();
+@let status = effectiveStatus();
+<section class="delegation" [attr.aria-label]="item.label">
+  <mat-expansion-panel
+    class="delegation-panel"
+    hideToggle
+    [expanded]="expanded()"
+    (opened)="expanded.set(true)"
+    (closed)="expanded.set(false)"
+  >
+    <mat-expansion-panel-header collapsedHeight="64px" expandedHeight="64px">
+      <mat-panel-title class="delegation-title">
+        <span class="delegation-icon" aria-hidden="true">
+          <mat-icon>account_tree</mat-icon>
+        </span>
+        <span class="delegation-heading">
+          <strong>{{ item.label }}</strong>
+          @if (item.task) {
+            <span [attr.title]="item.task">{{ item.task }}</span>
+          }
+        </span>
+      </mat-panel-title>
+      <mat-panel-description class="delegation-state" [matTooltip]="statusLabel(status)">
+        @if (status === 'running') {
+          <mat-spinner
+            diameter="18"
+            strokeWidth="2"
+            [attr.aria-label]="statusLabel(status)"
+          ></mat-spinner>
+        } @else {
+          <mat-icon
+            [class.waiting]="status === 'approval_required' || status === 'input_required'"
+            [class.problem]="status === 'denied' || status === 'cancelled' || status === 'failed'"
+            [attr.aria-label]="statusLabel(status)"
+            >{{ statusIcon(status) }}</mat-icon
+          >
+        }
+      </mat-panel-description>
+    </mat-expansion-panel-header>
+
+    <div #delegationBody class="delegation-body">
+      @for (entry of item.timeline; track entry.id) {
+        @switch (entry.kind) {
+          @case ('message') {
+            <article class="delegation-message">
+              <div class="markdown-body" [innerHTML]="entry.message.text | markdown"></div>
+            </article>
+          }
+          @case ('note') {
+            <app-agent-note [text]="entry.text" />
+          }
+          @case ('activity') {
+            <app-agent-activity
+              [sessionId]="sessionId()"
+              [steps]="entry.steps"
+              [running]="entry.running ?? false"
+              (approvalDecision)="approvalDecision.emit($event)"
+              (userInputSubmission)="userInputSubmission.emit($event)"
+              (mcpElicitationSubmission)="mcpElicitationSubmission.emit($event)"
+              (mcpCancellation)="mcpCancellation.emit($event)"
+              (activeStepExpanded)="scrollToLatestActivity()"
+            />
+          }
+        }
+      }
+
+      @if (item.result) {
+        <div class="delegation-result">
+          <span>Result</span>
+          <div class="markdown-body" [innerHTML]="item.result | markdown"></div>
+        </div>
+      } @else if (status === 'running' && item.timeline.length === 0) {
+        <div class="delegation-waiting" role="status">Starting delegated work</div>
+      }
+    </div>
+  </mat-expansion-panel>
+</section>

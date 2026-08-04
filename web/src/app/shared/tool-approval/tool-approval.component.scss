@@ -1,0 +1,101 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+
+.approval-request {
+  display: grid;
+  width: 100%;
+  gap: 12px;
+}
+
+.approval-request > mat-form-field {
+  width: min(100%, 640px);
+}
+
+.approval-target {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.approval-target > mat-icon {
+  flex: 0 0 auto;
+  color: var(--mat-sys-primary);
+}
+
+.approval-target > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.approval-target span:first-child {
+  font: var(--mat-sys-title-small);
+}
+
+.target-label {
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-label-small);
+}
+
+.approval-target code {
+  overflow-wrap: anywhere;
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-body-small);
+}
+
+.approval-actions,
+.approval-resolution {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.approval-actions {
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.approval-option-button {
+  min-width: 0;
+  max-width: min(100%, 480px);
+  overflow: hidden;
+  height: auto;
+  min-height: 40px;
+  padding-block: 6px;
+}
+
+.approval-option-button mat-icon {
+  flex: 0 0 auto;
+}
+
+.approval-option-label {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+  text-align: start;
+  white-space: normal;
+}
+
+.approval-resolution {
+  font: var(--mat-sys-body-medium);
+}
+
+.approval-resolution span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.approval-resolution.approved,
+.approval-resolution.executing {
+  color: var(--mat-sys-primary);
+}
+
+.approval-resolution.denied {
+  color: var(--mat-sys-error);
+}

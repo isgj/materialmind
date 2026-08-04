@@ -1,0 +1,22 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+
+.attachment-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.attachment-name {
+  display: block;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+img[matChipAvatar] {
+  object-fit: cover;
+}

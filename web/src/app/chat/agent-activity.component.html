@@ -1,0 +1,334 @@
+<section
+  class="agent-activity"
+  [attr.aria-label]="running() ? 'Agent activity in progress' : 'Agent activity'"
+>
+  <div class="activity-summary">
+    <span>Agent activity</span>
+    @if (running()) {
+      <mat-spinner diameter="16" aria-label="Running"></mat-spinner>
+    } @else {
+      <span>{{ steps().length }} {{ steps().length === 1 ? 'step' : 'steps' }}</span>
+    }
+  </div>
+
+  <mat-accordion class="activity-list" multi aria-label="Agent activity steps">
+    @for (step of steps(); track step.id) {
+      <div class="activity-item">
+        <div class="activity-marker" aria-hidden="true">
+          <mat-icon>{{ step.icon }}</mat-icon>
+        </div>
+        <mat-expansion-panel
+          #activityPanel
+          class="activity-panel"
+          [disabled]="!showStepDetails(step)"
+          hideToggle
+          style="--mat-expansion-header-disabled-state-text-color: var(--mat-sys-on-surface)"
+          (afterExpand)="notifyActiveStepExpanded(step)"
+        >
+          <mat-expansion-panel-header
+            collapsedHeight="52px"
+            expandedHeight="52px"
+            [attr.aria-label]="step.label + ', ' + statusLabel(step)"
+          >
+            <mat-panel-title class="step-title">
+              <span>{{ step.label }}</span>
+            </mat-panel-title>
+            <mat-panel-description class="step-state" [matTooltip]="statusLabel(step)">
+              @if (step.status === 'running' && step.mcp?.cancelable) {
+                <button
+                  mat-icon-button
+                  type="button"
+                  class="mcp-stop-action"
+                  [disabled]="step.mcp.cancelling"
+                  [matTooltip]="
+                    step.mcp.cancelling ? 'Stopping MCP tool call' : 'Stop this MCP tool call'
+                  "
+                  [attr.aria-label]="
+                    step.mcp.cancelling ? 'Stopping MCP tool call' : 'Stop this MCP tool call'
+                  "
+                  (click)="cancelMCPToolCall($event, step.id)"
+                >
+                  <mat-icon>stop</mat-icon>
+                </button>
+              } @else if (
+                step.status === 'running' ||
+                step.approval?.status === 'submitting' ||
+                step.userInput?.status === 'submitting' ||
+                step.mcpElicitation?.status === 'submitting'
+              ) {
+                <mat-spinner
+                  class="step-running-indicator"
+                  diameter="16"
+                  strokeWidth="2"
+                  [attr.aria-label]="statusLabel(step)"
+                ></mat-spinner>
+              } @else {
+                <mat-icon
+                  class="step-state-icon"
+                  [class.step-approval-indicator]="step.status === 'approval_required'"
+                  [class.step-input-indicator]="step.status === 'input_required'"
+                  [class.step-state-queued]="step.status === 'queued'"
+                  [class.step-state-complete]="step.status === 'complete'"
+                  [class.step-state-problem]="
+                    step.status === 'denied' ||
+                    step.status === 'cancelled' ||
+                    step.status === 'failed'
+                  "
+                  [attr.aria-label]="statusLabel(step)"
+                  >{{ statusIcon(step) }}</mat-icon
+                >
+              }
+            </mat-panel-description>
+          </mat-expansion-panel-header>
+
+          @if (showStepDetails(step)) {
+            <ng-template matExpansionPanelContent>
+              <div class="step-details">
+                @if (step.userInput; as userInput) {
+                  <app-user-input
+                    [request]="userInput"
+                    (submitted)="userInputSubmission.emit($event)"
+                  />
+                }
+                @if (step.mcpElicitation; as elicitation) {
+                  <app-mcp-elicitation
+                    [request]="elicitation"
+                    (submitted)="mcpElicitationSubmission.emit($event)"
+                  />
+                }
+                @if (step.approval; as approval) {
+                  <app-tool-approval
+                    [approval]="approval"
+                    [prompt]="approval.prompt"
+                    [icon]="approval.icon"
+                    [targetLabel]="approval.targetLabel"
+                    [target]="approval.target"
+                    [showTarget]="approval.kind !== 'command_run'"
+                    (decision)="approvalDecision.emit($event)"
+                  >
+                    @if (approval.kind === 'file_edit' && approval.files?.length) {
+                      <div class="file-patches">
+                        @for (file of approval.files; track file.path) {
+                          <app-diff-preview
+                            [path]="file.path"
+                            [diff]="file.diff"
+                            [operation]="file.operation"
+                          />
+                        }
+                      </div>
+                    } @else if (approval.kind === 'file_edit' && approval.diff) {
+                      <app-diff-preview [path]="approval.target" [diff]="approval.diff" />
+                    } @else if (approval.kind === 'command_run') {
+                      @if (approval.command; as command) {
+                        <div class="command-details">
+                          <div class="command-line markdown-body">
+                            <pre
+                              aria-label="Bash command"
+                              tabindex="0"
+                            ><code class="language-bash">{{ command.commandLine }}</code></pre>
+                          </div>
+                          <div class="command-context">
+                            <div class="command-meta-item">
+                              <mat-icon aria-hidden="true" matTooltip="Working directory"
+                                >folder_open</mat-icon
+                              >
+                              <span class="visually-hidden">Working directory</span>
+                              <code>{{ command.workingDirectory }}</code>
+                            </div>
+                            <div class="command-meta-item command-timeout">
+                              <mat-icon aria-hidden="true" matTooltip="Timeout">timer</mat-icon>
+                              <span class="visually-hidden">Timeout</span>
+                              <span>{{ command.timeoutSeconds }} seconds</span>
+                            </div>
+                          </div>
+                        </div>
+                      }
+                    } @else if (
+                      approval.kind === 'mcp_tool' && !step.mcp && hasValues(step.input)
+                    ) {
+                      <div class="detail-block">
+                        <span>Arguments</span>
+                        <pre>{{ step.input | json }}</pre>
+                      </div>
+                    } @else if (approval.kind === 'session_notes') {
+                      @if (step.sessionNotes; as notes) {
+                        @if (notes.operation === 'update') {
+                          <app-session-notes-details [details]="notes" />
+                        }
+                      }
+                    }
+                  </app-tool-approval>
+                }
+                @if (
+                  hasValues(step.input) &&
+                  !step.approval &&
+                  !step.userInput &&
+                  !step.command &&
+                  !step.fetch &&
+                  !step.sessionNotes &&
+                  !step.mcp &&
+                  !step.fileChanges?.length
+                ) {
+                  <div class="detail-block">
+                    <span>Input</span>
+                    <pre>{{ step.input | json }}</pre>
+                  </div>
+                }
+                @if (step.mcp; as mcp) {
+                  <app-mcp-tool-details
+                    [sessionId]="sessionId()"
+                    [details]="mcp"
+                    [arguments]="mcpArguments(step)"
+                  />
+                } @else if (step.fetch; as fetch) {
+                  @if (step.output) {
+                    <div
+                      class="fetch-result"
+                      [class.fetch-result-error]="fetchFailed(fetch)"
+                      aria-live="polite"
+                    >
+                      <div class="fetch-summary">
+                        <mat-icon aria-hidden="true">{{ fetchStatusIcon(fetch) }}</mat-icon>
+                        <strong>{{ fetchStatusLabel(fetch) }}</strong>
+                        @if (fetch.contentType) {
+                          <span>{{ fetch.contentType }}</span>
+                        }
+                        @if (fetch.truncated) {
+                          <span>Response truncated</span>
+                        }
+                      </div>
+                      @if (fetch.finalUrl && fetch.finalUrl !== fetch.requestedUrl) {
+                        <div class="fetch-final-url">
+                          <span>Final URL</span>
+                          <code>{{ fetch.finalUrl }}</code>
+                        </div>
+                      }
+                      @if (fetch.reason) {
+                        <div class="fetch-reason">{{ fetch.reason }}</div>
+                      }
+                    </div>
+                  } @else if (step.status === 'running') {
+                    <div class="running-detail" role="status">Waiting for the response</div>
+                  }
+                } @else if (step.sessionNotes; as notes) {
+                  @if (!step.approval) {
+                    @if (notes.operation === 'read' && step.status === 'running') {
+                      <div class="running-detail" role="status">Reading session notes</div>
+                    } @else {
+                      <app-session-notes-details [details]="notes" />
+                    }
+                  }
+                } @else if (step.command; as command) {
+                  @if (!step.approval) {
+                    <div class="command-details">
+                      <div class="command-line markdown-body">
+                        <pre
+                          aria-label="Bash command"
+                          tabindex="0"
+                        ><code class="language-bash">{{ command.commandLine }}</code></pre>
+                      </div>
+                      <div class="command-context">
+                        <div class="command-meta-item">
+                          <mat-icon aria-hidden="true" matTooltip="Working directory"
+                            >folder_open</mat-icon
+                          >
+                          <span class="visually-hidden">Working directory</span>
+                          <code>{{ command.workingDirectory }}</code>
+                        </div>
+                        <div class="command-meta-item command-timeout">
+                          <mat-icon aria-hidden="true" matTooltip="Timeout">timer</mat-icon>
+                          <span class="visually-hidden">Timeout</span>
+                          <span>{{ command.timeoutSeconds }} seconds</span>
+                        </div>
+                      </div>
+                    </div>
+                  }
+                  @if (step.status !== 'approval_required') {
+                    <div class="command-result" aria-live="polite">
+                      @if (step.approval?.status !== 'executing') {
+                        <div class="command-summary">
+                          @if (step.status === 'running') {
+                            <mat-spinner diameter="14" aria-label="Command running"></mat-spinner>
+                          } @else {
+                            <mat-icon aria-hidden="true">terminal</mat-icon>
+                          }
+                          <span>{{ commandStatus(command, step.status) }}</span>
+                        </div>
+                      }
+                      @if (hasCommandOutput(command)) {
+                        <mat-expansion-panel
+                          class="command-output-panel"
+                          [expanded]="step.status === 'running'"
+                        >
+                          <mat-expansion-panel-header>
+                            <mat-panel-title>Command output</mat-panel-title>
+                            <mat-panel-description>{{
+                              commandOutputLabel(command)
+                            }}</mat-panel-description>
+                          </mat-expansion-panel-header>
+                          <div class="command-output-body">
+                            @if (command.stdout) {
+                              <div class="command-stream">
+                                <span>
+                                  Standard output
+                                  @if (command.stdoutTruncated) {
+                                    (truncated)
+                                  }
+                                </span>
+                                <pre
+                                  #commandOutput
+                                  [attr.data-command-step-id]="step.id"
+                                ><app-ansi-text [value]="command.stdout" /></pre>
+                              </div>
+                            }
+                            @if (command.stderr) {
+                              <div class="command-stream stderr">
+                                <span>
+                                  Standard error
+                                  @if (command.stderrTruncated) {
+                                    (truncated)
+                                  }
+                                </span>
+                                <pre
+                                  #commandOutput
+                                  [attr.data-command-step-id]="step.id"
+                                ><app-ansi-text [value]="command.stderr" /></pre>
+                              </div>
+                            }
+                          </div>
+                        </mat-expansion-panel>
+                      }
+                      @if (command.error) {
+                        <div class="command-error">{{ command.error }}</div>
+                      }
+                      @if (step.status === 'running' && !command.stdout && !command.stderr) {
+                        <div class="running-detail" role="status">Waiting for command output</div>
+                      }
+                    </div>
+                  }
+                } @else if (!step.approval && step.fileChanges?.length) {
+                  <div class="file-patches">
+                    @for (file of step.fileChanges; track file.path) {
+                      <app-diff-preview
+                        [path]="file.path"
+                        [diff]="file.diff"
+                        [operation]="file.operation"
+                      />
+                    }
+                  </div>
+                } @else if (step.output && !step.userInput) {
+                  <div class="detail-block">
+                    <span>Result</span>
+                    <pre>{{ step.output | json }}</pre>
+                  </div>
+                } @else if (step.status === 'running' && !step.userInput) {
+                  <div class="running-detail" role="status">Waiting for the tool result</div>
+                }
+              </div>
+            </ng-template>
+          }
+        </mat-expansion-panel>
+      </div>
+    }
+  </mat-accordion>
+</section>

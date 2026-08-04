@@ -1,0 +1,139 @@
+:host {
+  display: block;
+  width: 100%;
+}
+
+.delegation-panel {
+  min-width: 0;
+  --mat-expansion-container-background-color: var(--mat-sys-surface-container-low);
+  --mat-expansion-container-elevation-shadow: none;
+  --mat-expansion-container-shape: 8px;
+}
+
+.delegation-panel > .mat-expansion-panel-header {
+  padding-inline: 12px 16px;
+}
+
+.delegation-title {
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.delegation-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--mat-sys-primary-container);
+  color: var(--mat-sys-on-primary-container);
+  place-items: center;
+}
+
+.delegation-icon mat-icon {
+  width: 20px;
+  height: 20px;
+  font-size: 20px;
+}
+
+.delegation-heading {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.delegation-heading strong {
+  color: var(--mat-sys-on-surface);
+  font: var(--mat-sys-title-small);
+}
+
+.delegation-heading > span {
+  overflow: hidden;
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-body-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.delegation-state {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  margin: 0;
+  color: var(--mat-sys-primary);
+  place-items: center;
+}
+
+.delegation-state mat-icon {
+  width: 20px;
+  height: 20px;
+  font-size: 20px;
+}
+
+.delegation-state .waiting {
+  animation: delegation-attention 1.4s ease-in-out infinite;
+}
+
+.delegation-state .problem {
+  color: var(--mat-sys-error);
+}
+
+.delegation-body {
+  display: grid;
+  max-height: min(560px, 60dvh);
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  gap: 14px;
+  padding: 4px 4px 12px 0;
+}
+
+.delegation-message,
+.delegation-result {
+  min-width: 0;
+  color: var(--mat-sys-on-surface);
+}
+
+.delegation-message {
+  font: var(--mat-sys-body-medium);
+}
+
+.delegation-result {
+  display: grid;
+  gap: 6px;
+}
+
+.delegation-result > span {
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-label-medium);
+}
+
+.markdown-body {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.delegation-waiting {
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-body-small);
+}
+
+@keyframes delegation-attention {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .delegation-state .waiting {
+    animation: none;
+  }
+}

@@ -1,0 +1,60 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+
+.session-notes-details {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.notes-meta,
+.notes-meta > span,
+.notes-problem,
+.notes-empty {
+  display: flex;
+  align-items: center;
+}
+
+.notes-meta {
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-label-medium);
+}
+
+.notes-meta > span,
+.notes-problem,
+.notes-empty {
+  gap: 6px;
+}
+
+.session-notes-details .mat-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  font-size: 18px;
+  line-height: 18px;
+}
+
+.notes-content {
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 4px;
+  background: var(--mat-sys-surface-container);
+  color: var(--mat-sys-on-surface);
+  font: var(--mat-sys-body-medium);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.notes-problem {
+  color: var(--mat-sys-error);
+  font: var(--mat-sys-body-small);
+}
+
+.notes-empty {
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-body-small);
+}

@@ -1,0 +1,524 @@
+<main class="settings-page">
+  <header class="page-header">
+    <div class="page-title">
+      <div class="page-title-line">
+        <h1>{{ sectionDetails.title }}</h1>
+        @if (sectionCount() !== null) {
+          <span class="page-count">{{ sectionCount() }}</span>
+        }
+      </div>
+      <p>{{ sectionDetails.description }}</p>
+    </div>
+    @switch (section) {
+      @case ('runtimes') {
+        <button mat-flat-button type="button" (click)="addAcpAgent()">
+          <mat-icon>add</mat-icon>
+          Add ACP agent
+        </button>
+      }
+      @case ('mcp') {
+        <button mat-flat-button type="button" (click)="addMcpServer()">
+          <mat-icon>add</mat-icon>
+          Add server
+        </button>
+      }
+      @case ('models') {
+        <button mat-flat-button type="button" (click)="addProvider()">
+          <mat-icon>add</mat-icon>
+          Add provider
+        </button>
+      }
+    }
+  </header>
+
+  @if (section === 'appearance') {
+    <section class="appearance-section" aria-label="Appearance">
+      <mat-button-toggle-group
+        [value]="theme.mode()"
+        hideSingleSelectionIndicator
+        aria-label="Color theme"
+        (change)="theme.setMode($event.value)"
+      >
+        <mat-button-toggle value="light">
+          <mat-icon>light_mode</mat-icon>
+          Light
+        </mat-button-toggle>
+        <mat-button-toggle value="system">
+          <mat-icon>computer</mat-icon>
+          System
+        </mat-button-toggle>
+        <mat-button-toggle value="dark">
+          <mat-icon>dark_mode</mat-icon>
+          Dark
+        </mat-button-toggle>
+      </mat-button-toggle-group>
+    </section>
+  }
+
+  @if (section === 'data') {
+    <section
+      class="data-settings"
+      aria-label="Data management"
+      [attr.aria-busy]="loadingStorageSettings() || savingStorageSettings() || downloadingBackup()"
+    >
+      <div class="data-setting-row">
+        <div class="data-setting-copy">
+          <h2>Session retention</h2>
+          <p>
+            Idle sessions older than this period are deleted with their runs and attachments. Saving
+            a shorter period applies immediately.
+          </p>
+        </div>
+        <div class="data-setting-controls">
+          <mat-form-field appearance="outline" subscriptSizing="dynamic">
+            <mat-label>Keep sessions</mat-label>
+            <mat-select
+              [value]="retentionDays()"
+              [disabled]="loadingStorageSettings() || savingStorageSettings()"
+              (selectionChange)="retentionDays.set($event.value)"
+            >
+              @for (option of retentionOptions; track option.value) {
+                <mat-option [value]="option.value">{{ option.label }}</mat-option>
+              }
+            </mat-select>
+          </mat-form-field>
+          <button
+            mat-flat-button
+            type="button"
+            [disabled]="!storageSettings() || !storageSettingsChanged() || savingStorageSettings()"
+            (click)="saveStorageSettings()"
+          >
+            <mat-icon>save</mat-icon>
+            {{ savingStorageSettings() ? 'Saving' : 'Save' }}
+          </button>
+        </div>
+      </div>
+
+      <mat-divider></mat-divider>
+
+      <div class="data-setting-row">
+        <div class="data-setting-copy">
+          <h2>Database backup</h2>
+          <p>
+            Includes settings, workspaces, conversations, runs, and attachments. Credentials stored
+            in the OS keyring are excluded.
+          </p>
+        </div>
+        <button
+          mat-stroked-button
+          type="button"
+          [disabled]="downloadingBackup()"
+          (click)="downloadBackup()"
+        >
+          <mat-icon>download</mat-icon>
+          {{ downloadingBackup() ? 'Preparing' : 'Download backup' }}
+        </button>
+      </div>
+    </section>
+  }
+
+  @if (section === 'runtimes') {
+    <section class="settings-section" aria-label="Agent runtimes">
+      <div class="provider-list runtime-list">
+        <mat-card class="provider-card" appearance="outlined">
+          <mat-card-content>
+            <div class="provider-header">
+              <div class="provider-title">
+                <span class="provider-icon" aria-hidden="true">
+                  <mat-icon>extension</mat-icon>
+                </span>
+                <div>
+                  <h2>MaterialMind ADK</h2>
+                  <span class="compatibility">Built-in runtime</span>
+                </div>
+              </div>
+            </div>
+            <div class="runtime-details">
+              <span>
+                Uses MaterialMind tools, workspace permissions, and the LLM providers configured
+                below.
+              </span>
+            </div>
+          </mat-card-content>
+        </mat-card>
+
+        @for (agent of state.acpAgents(); track agent.id) {
+          <mat-card class="provider-card" appearance="outlined">
+            <mat-card-content>
+              <div class="provider-header">
+                <div class="provider-title">
+                  <span class="provider-icon" aria-hidden="true">
+                    <mat-icon>terminal</mat-icon>
+                  </span>
+                  <div>
+                    <h2>{{ agent.name }}</h2>
+                    <span class="compatibility">Agent Client Protocol</span>
+                  </div>
+                </div>
+                <div class="provider-actions">
+                  <button
+                    mat-icon-button
+                    type="button"
+                    matTooltip="Inspect ACP capabilities"
+                    [attr.aria-label]="'Inspect ' + agent.name + ' capabilities'"
+                    (click)="inspectAcpAgent(agent)"
+                  >
+                    <mat-icon>manage_search</mat-icon>
+                  </button>
+                  <button
+                    mat-icon-button
+                    type="button"
+                    matTooltip="Edit ACP agent"
+                    [attr.aria-label]="'Edit ' + agent.name"
+                    (click)="editAcpAgent(agent)"
+                  >
+                    <mat-icon>edit</mat-icon>
+                  </button>
+                  <button
+                    mat-icon-button
+                    type="button"
+                    matTooltip="Delete ACP agent"
+                    [attr.aria-label]="'Delete ' + agent.name"
+                    (click)="deleteAcpAgent(agent)"
+                  >
+                    <mat-icon>delete</mat-icon>
+                  </button>
+                </div>
+              </div>
+              <div class="connection-details runtime-connection-details">
+                <div class="connection-item">
+                  <span>Command</span>
+                  <code>{{ acpCommand(agent) }}</code>
+                </div>
+                <div
+                  class="credential-status"
+                  [class.ready]="agent.available"
+                  [class.missing]="!agent.available"
+                >
+                  <mat-icon aria-hidden="true">{{ acpStatusIcon(agent) }}</mat-icon>
+                  <span>{{ acpStatusLabel(agent) }}</span>
+                </div>
+              </div>
+            </mat-card-content>
+          </mat-card>
+        }
+      </div>
+    </section>
+  }
+
+  @if (section === 'mcp') {
+    <section class="settings-section" aria-label="MCP servers">
+      @if (state.mcpServers().length > 0) {
+        <div class="provider-list">
+          @for (server of state.mcpServers(); track server.id) {
+            <mat-card class="provider-card" appearance="outlined">
+              <mat-card-content>
+                <div class="provider-header">
+                  <div class="provider-title">
+                    <span class="provider-icon" aria-hidden="true">
+                      <mat-icon>{{
+                        server.transport === 'stdio' ? 'terminal' : 'language'
+                      }}</mat-icon>
+                    </span>
+                    <div>
+                      <h2>{{ server.name }}</h2>
+                      <span class="compatibility">{{ mcpTransportLabel(server) }}</span>
+                    </div>
+                  </div>
+                  <div class="provider-actions">
+                    <button
+                      mat-icon-button
+                      type="button"
+                      matTooltip="Edit MCP server"
+                      [attr.aria-label]="'Edit ' + server.name"
+                      (click)="editMcpServer(server)"
+                    >
+                      <mat-icon>edit</mat-icon>
+                    </button>
+                    <button
+                      mat-icon-button
+                      type="button"
+                      matTooltip="Delete MCP server"
+                      [attr.aria-label]="'Delete ' + server.name"
+                      (click)="deleteMcpServer(server)"
+                    >
+                      <mat-icon>delete</mat-icon>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="connection-details mcp-connection-details">
+                  <div class="connection-item">
+                    <span>{{ server.transport === 'stdio' ? 'Command' : 'URL' }}</span>
+                    <code>{{ mcpConnection(server) }}</code>
+                  </div>
+                  <div class="connection-item">
+                    <span>Authentication</span>
+                    <span>{{ mcpAuthLabel(server) }}</span>
+                  </div>
+                  @if (discoveredProtocolVersions()[server.id]; as protocolVersion) {
+                    <div class="connection-item">
+                      <span>Protocol</span>
+                      <code>{{ protocolVersion }}</code>
+                    </div>
+                  }
+                  <div
+                    class="credential-status"
+                    [class.ready]="
+                      mcpStatus(server)?.state === 'connected' ||
+                      (!mcpStatus(server) && server.available)
+                    "
+                    [class.missing]="
+                      mcpStatus(server)?.state === 'error' ||
+                      (!mcpStatus(server) && !server.available)
+                    "
+                  >
+                    <mat-icon
+                      aria-hidden="true"
+                      [class.spinning]="mcpStatus(server)?.state === 'pending'"
+                      >{{ mcpStatusIcon(server) }}</mat-icon
+                    >
+                    <span>{{ mcpStatusLabel(server) }}</span>
+                  </div>
+                </div>
+
+                @if (server.oauthScopes.length > 0) {
+                  <div class="mcp-scopes">
+                    <span>Scopes</span>
+                    <code>{{ server.oauthScopes.join(' ') }}</code>
+                  </div>
+                }
+
+                <div class="mcp-default-policy">
+                  <div class="mcp-default-heading">
+                    <h3>New workspace defaults</h3>
+                    <p>Copied when a workspace is created. Existing workspaces are not changed.</p>
+                  </div>
+                  <div class="mcp-default-controls">
+                    <mat-slide-toggle
+                      [checked]="mcpDefaultEnabled(server)"
+                      [disabled]="savingMcpDefaultIds().has(server.id)"
+                      (change)="setMcpDefaultEnabled(server, $event.checked)"
+                    >
+                      Enabled
+                    </mat-slide-toggle>
+                    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                      <mat-label>Default confirmation</mat-label>
+                      <mat-select
+                        [value]="mcpDefaultConfirmation(server)"
+                        [disabled]="savingMcpDefaultIds().has(server.id)"
+                        (selectionChange)="setMcpDefaultConfirmation(server, $event.value)"
+                      >
+                        <mat-option value="allow">Allow without asking</mat-option>
+                        <mat-option value="ask">Ask every time</mat-option>
+                      </mat-select>
+                    </mat-form-field>
+                    <button
+                      mat-button
+                      type="button"
+                      [disabled]="
+                        !canDiscoverMcpTools(server) || savingMcpDefaultIds().has(server.id)
+                      "
+                      (click)="editMcpDefaultToolPermissions(server)"
+                    >
+                      @if (savingMcpDefaultIds().has(server.id)) {
+                        <mat-icon class="spinning">progress_activity</mat-icon>
+                      } @else {
+                        <mat-icon>tune</mat-icon>
+                      }
+                      Tool defaults
+                      @if (mcpDefaultOverrideCount(server)) {
+                        <span>({{ mcpDefaultOverrideCount(server) }})</span>
+                      }
+                    </button>
+                  </div>
+                </div>
+
+                <mat-divider></mat-divider>
+
+                <div class="mcp-actions">
+                  <button
+                    mat-button
+                    type="button"
+                    [disabled]="!canDiscoverMcpTools(server)"
+                    (click)="discoverMcpTools(server)"
+                  >
+                    <mat-icon>extension</mat-icon>
+                    Test and list capabilities
+                    @if (discoveredToolCounts()[server.id] !== undefined) {
+                      <span>
+                        ({{ discoveredToolCounts()[server.id] }} tools,
+                        {{ discoveredContentCounts()[server.id] }} context)
+                      </span>
+                    }
+                  </button>
+                  @if (server.authType === 'oauth') {
+                    @if (mcpStatus(server)?.state === 'connected') {
+                      <button mat-button type="button" (click)="disconnectMcpOAuth(server)">
+                        <mat-icon>link_off</mat-icon>
+                        Disconnect
+                      </button>
+                    } @else if (mcpStatus(server)?.state === 'pending') {
+                      <button mat-button type="button" (click)="disconnectMcpOAuth(server)">
+                        <mat-icon>close</mat-icon>
+                        Cancel authorization
+                      </button>
+                    } @else {
+                      <button
+                        mat-flat-button
+                        type="button"
+                        [disabled]="!server.available"
+                        (click)="connectMcpOAuth(server)"
+                      >
+                        <mat-icon aria-hidden="true">login</mat-icon>
+                        Connect
+                      </button>
+                    }
+                  }
+                </div>
+              </mat-card-content>
+            </mat-card>
+          }
+        </div>
+      } @else {
+        <div class="empty-state">
+          <mat-icon aria-hidden="true">extension</mat-icon>
+          <strong>No MCP servers</strong>
+          <span>Add a local stdio or Streamable HTTP server.</span>
+          <button mat-flat-button type="button" (click)="addMcpServer()">Add server</button>
+        </div>
+      }
+    </section>
+  }
+
+  @if (section === 'models') {
+    <section class="settings-section" aria-label="LLM providers">
+      @if (state.llmProviders().length > 0) {
+        <div class="provider-list">
+          @for (provider of state.llmProviders(); track provider.id) {
+            <mat-card class="provider-card" appearance="outlined">
+              <mat-card-content>
+                <div class="provider-header">
+                  <div class="provider-title">
+                    <span class="provider-icon" aria-hidden="true">
+                      <mat-icon>hub</mat-icon>
+                    </span>
+                    <div>
+                      <h2>{{ provider.name }}</h2>
+                      <span class="compatibility">{{ providerCompatibilityLabel(provider) }}</span>
+                    </div>
+                  </div>
+                  <div class="provider-actions">
+                    <button
+                      mat-icon-button
+                      type="button"
+                      matTooltip="Edit provider"
+                      [attr.aria-label]="'Edit ' + provider.name"
+                      (click)="editProvider(provider)"
+                    >
+                      <mat-icon>edit</mat-icon>
+                    </button>
+                    <button
+                      mat-icon-button
+                      type="button"
+                      matTooltip="Delete provider"
+                      [attr.aria-label]="'Delete ' + provider.name"
+                      (click)="deleteProvider(provider)"
+                    >
+                      <mat-icon>delete</mat-icon>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="connection-details">
+                  <div class="connection-item">
+                    <span>Base URL</span>
+                    <code>{{ provider.baseUrl || 'Default endpoint' }}</code>
+                  </div>
+                  <div class="connection-item">
+                    <span>Authentication</span>
+                    <code>{{ providerAuthenticationLabel(provider) }}</code>
+                  </div>
+                  <div
+                    class="credential-status"
+                    [class.ready]="provider.authType !== 'none' && provider.credentialAvailable"
+                    [class.missing]="!provider.credentialAvailable"
+                  >
+                    <mat-icon aria-hidden="true">{{ providerStatusIcon(provider) }}</mat-icon>
+                    <span>{{ providerStatusLabel(provider) }}</span>
+                  </div>
+                </div>
+
+                <mat-divider></mat-divider>
+
+                <div class="models-heading">
+                  <div>
+                    <h3>Models</h3>
+                    <span>{{ modelCount(provider) }}</span>
+                  </div>
+                  <button mat-button type="button" (click)="addModel(provider)">
+                    <mat-icon>add</mat-icon>
+                    Add model
+                  </button>
+                </div>
+
+                <div class="model-list">
+                  @for (model of modelsForProvider(provider); track model.id; let last = $last) {
+                    <div class="model-row">
+                      <mat-icon class="model-icon" aria-hidden="true">smart_toy</mat-icon>
+                      <div class="model-identity">
+                        <strong>{{ model.name }}</strong>
+                        <code>{{ model.modelId }}</code>
+                      </div>
+                      <div class="model-settings">
+                        <span>Context {{ formatTokens(model.contextWindowTokens) }}</span>
+                        <span>Output {{ formatTokens(model.maxOutputTokens) }}</span>
+                        @if (providerSupportsReasoningEffort(provider) && model.reasoningEffort) {
+                          <span>Reasoning {{ reasoningEffortLabel(model.reasoningEffort) }}</span>
+                        }
+                      </div>
+                      <div class="model-actions">
+                        <button
+                          mat-icon-button
+                          type="button"
+                          matTooltip="Edit model"
+                          [attr.aria-label]="'Edit ' + model.name"
+                          (click)="editModel(model)"
+                        >
+                          <mat-icon>edit</mat-icon>
+                        </button>
+                        <button
+                          mat-icon-button
+                          type="button"
+                          matTooltip="Delete model"
+                          [attr.aria-label]="'Delete ' + model.name"
+                          (click)="deleteModel(model)"
+                        >
+                          <mat-icon>delete</mat-icon>
+                        </button>
+                      </div>
+                    </div>
+                    @if (!last) {
+                      <mat-divider></mat-divider>
+                    }
+                  } @empty {
+                    <div class="empty-models">
+                      <mat-icon aria-hidden="true">smart_toy</mat-icon>
+                      <span>No models</span>
+                    </div>
+                  }
+                </div>
+              </mat-card-content>
+            </mat-card>
+          }
+        </div>
+      } @else {
+        <div class="empty-state">
+          <mat-icon aria-hidden="true">dns</mat-icon>
+          <strong>No LLM providers</strong>
+          <button mat-flat-button type="button" (click)="addProvider()">Add provider</button>
+        </div>
+      }
+    </section>
+  }
+</main>

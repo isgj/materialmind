@@ -1,0 +1,37 @@
+<section
+  class="session-notes-details"
+  [attr.aria-label]="
+    details().operation === 'update' ? 'Session notes update' : 'Session notes read'
+  "
+>
+  <div class="notes-meta">
+    @if (details().revision !== undefined) {
+      <span>
+        <mat-icon aria-hidden="true" matTooltip="Revision">history</mat-icon>
+        Revision {{ details().revision }}
+      </span>
+    }
+    @if (details().bytes !== undefined) {
+      <span>
+        <mat-icon aria-hidden="true" matTooltip="Size">data_object</mat-icon>
+        {{ details().bytes }} bytes
+      </span>
+    }
+  </div>
+
+  @if (details().reason) {
+    <div class="notes-problem" role="alert">
+      <mat-icon aria-hidden="true">error_outline</mat-icon>
+      <span>{{ details().reason }}</span>
+    </div>
+  }
+
+  @if (details().content) {
+    <div class="notes-content markdown-body" [innerHTML]="details().content | markdown"></div>
+  } @else if (details().operation === 'update' && details().state !== 'conflict') {
+    <div class="notes-empty">
+      <mat-icon aria-hidden="true">note_remove</mat-icon>
+      <span>Session notes are empty</span>
+    </div>
+  }
+</section>

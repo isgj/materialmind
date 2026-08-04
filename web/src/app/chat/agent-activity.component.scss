@@ -1,0 +1,386 @@
+:host {
+  display: block;
+  align-self: flex-start;
+  width: 100%;
+}
+
+.activity-summary {
+  display: flex;
+  min-height: 24px;
+  align-items: center;
+  gap: 8px;
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-label-medium);
+}
+
+.activity-summary > span:first-child {
+  color: var(--mat-sys-on-surface);
+  font-weight: 500;
+}
+
+.activity-list {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.activity-list::before {
+  position: absolute;
+  z-index: 0;
+  inset-block: 16px;
+  inset-inline-start: 15px;
+  width: 2px;
+  background: var(--mat-sys-outline-variant);
+  content: '';
+}
+
+.activity-item {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+}
+
+.activity-marker {
+  z-index: 1;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  margin-top: 10px;
+  border-radius: 50%;
+  background: var(--mat-sys-primary-container);
+  color: var(--mat-sys-on-primary-container);
+  place-items: center;
+}
+
+.activity-marker mat-icon {
+  width: 18px;
+  height: 18px;
+  font-size: 18px;
+}
+
+.activity-panel {
+  min-width: 0;
+  margin: 0;
+  --mat-expansion-container-background-color: var(--mat-sys-surface-container-low);
+  --mat-expansion-container-elevation-shadow: none;
+  --mat-expansion-container-shape: 8px;
+}
+
+.activity-panel > .mat-expansion-panel-header {
+  padding-inline: 16px;
+}
+
+.step-title {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  color: var(--mat-sys-on-surface);
+  font: var(--mat-sys-title-small);
+  overflow: hidden;
+}
+
+.step-title > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-state {
+  display: flex;
+  width: auto;
+  height: 40px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+}
+
+.mcp-stop-action {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  padding: 8px;
+}
+
+.step-state-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--mat-sys-on-surface-variant);
+  font-size: 20px;
+}
+
+.step-running-indicator {
+  flex: 0 0 auto;
+}
+
+.step-approval-indicator,
+.step-input-indicator {
+  color: var(--mat-sys-primary);
+  animation: approval-attention 1.4s ease-in-out infinite;
+}
+
+.step-state-complete,
+.step-state-queued {
+  color: var(--mat-sys-primary);
+}
+
+.step-state-problem {
+  color: var(--mat-sys-error);
+}
+
+.step-details {
+  display: grid;
+  gap: 12px;
+  padding: 4px 0 12px;
+}
+
+.file-patches {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.command-result,
+.command-stream {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.command-details {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.command-line {
+  min-width: 0;
+}
+
+.command-context {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+}
+
+.command-meta-item {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.command-meta-item mat-icon {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  color: var(--mat-sys-on-surface-variant);
+  font-size: 20px;
+}
+
+.command-timeout {
+  white-space: nowrap;
+}
+
+.command-stream > span {
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-label-small);
+}
+
+.command-context code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.command-stream pre {
+  max-height: 280px;
+  overflow: auto;
+  margin: 0;
+  border-radius: 4px;
+  background: var(--mat-sys-surface-container);
+  color: var(--mat-sys-on-surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  white-space: pre;
+}
+
+.command-summary {
+  display: flex;
+  min-height: 24px;
+  align-items: center;
+  gap: 8px;
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-body-small);
+}
+
+.command-summary mat-icon {
+  width: 18px;
+  height: 18px;
+  font-size: 18px;
+}
+
+.command-output-panel {
+  --mat-expansion-container-background-color: var(--mat-sys-surface-container);
+  --mat-expansion-container-elevation-shadow: none;
+  --mat-expansion-container-shape: 4px;
+  --mat-expansion-header-collapsed-state-height: 44px;
+  --mat-expansion-header-expanded-state-height: 44px;
+}
+
+.command-output-body {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.fetch-result {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-body-small);
+}
+
+.fetch-summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.fetch-summary mat-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--mat-sys-primary);
+  font-size: 18px;
+}
+
+.fetch-summary strong {
+  color: var(--mat-sys-on-surface);
+  font-weight: 500;
+}
+
+.fetch-summary strong + span::before,
+.fetch-summary span + span::before {
+  content: '\00b7';
+  margin-inline-end: 8px;
+}
+
+.fetch-result-error .fetch-summary mat-icon,
+.fetch-result-error .fetch-summary strong,
+.fetch-reason {
+  color: var(--mat-sys-error);
+}
+
+.fetch-final-url {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.fetch-final-url > span {
+  font: var(--mat-sys-label-small);
+}
+
+.fetch-final-url code {
+  overflow-wrap: anywhere;
+  color: var(--mat-sys-on-surface);
+}
+
+.command-stream.stderr > span,
+.command-error {
+  color: var(--mat-sys-error);
+}
+
+.command-error {
+  font: var(--mat-sys-body-small);
+}
+
+.detail-block {
+  display: grid;
+  gap: 4px;
+}
+
+.detail-block > span {
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-label-small);
+}
+
+.detail-block pre {
+  max-height: 280px;
+  overflow: auto;
+  margin: 0;
+  border-radius: 4px;
+  background: var(--mat-sys-surface-container);
+  color: var(--mat-sys-on-surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+}
+
+.running-detail {
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-body-small);
+}
+
+@keyframes approval-attention {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.92);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step-approval-indicator,
+  .step-input-indicator {
+    animation: none;
+  }
+}
+
+@media (max-width: 640px) {
+  :host {
+    width: 100%;
+  }
+
+  .activity-list::before {
+    inset-inline-start: 13px;
+  }
+
+  .activity-item {
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .activity-marker {
+    width: 28px;
+    height: 28px;
+    margin-top: 12px;
+  }
+
+  .activity-marker mat-icon {
+    width: 17px;
+    height: 17px;
+    font-size: 17px;
+  }
+
+  .activity-panel > .mat-expansion-panel-header {
+    padding-inline: 12px;
+  }
+}

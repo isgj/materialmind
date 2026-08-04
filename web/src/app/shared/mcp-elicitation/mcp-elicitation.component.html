@@ -1,0 +1,107 @@
+<section class="mcp-elicitation" [attr.aria-label]="'Request from ' + request().serverName">
+  <div class="elicitation-heading">
+    <mat-icon aria-hidden="true">contact_support</mat-icon>
+    <div>
+      <strong>{{ request().serverName }} needs your input</strong>
+      <p>{{ request().message }}</p>
+    </div>
+  </div>
+
+  @if (request().status === 'resolved') {
+    <div class="elicitation-resolution" role="status">
+      <mat-icon aria-hidden="true">check_circle</mat-icon>
+      <span>{{ resolutionLabel() }}</span>
+    </div>
+  } @else if (request().mode === 'url') {
+    <div class="elicitation-url">
+      <mat-icon aria-hidden="true">open_in_new</mat-icon>
+      <code>{{ request().url }}</code>
+    </div>
+    <div class="elicitation-actions">
+      <a
+        mat-flat-button
+        [href]="request().url"
+        target="_blank"
+        rel="noopener noreferrer"
+        [class.disabled-link]="request().status !== 'pending'"
+        [attr.aria-disabled]="request().status !== 'pending'"
+        (click)="submit('accept')"
+      >
+        <mat-icon>open_in_new</mat-icon>
+        Open and continue
+      </a>
+      <button mat-button type="button" (click)="submit('decline')">Decline</button>
+      <button mat-button type="button" (click)="submit('cancel')">Cancel</button>
+      @if (request().status === 'submitting') {
+        <mat-spinner diameter="18" aria-label="Submitting response"></mat-spinner>
+      }
+    </div>
+  } @else {
+    <div class="elicitation-fields">
+      @for (field of fields(); track field.name) {
+        @if (field.kind === 'boolean') {
+          <mat-checkbox
+            [checked]="booleanValue(field)"
+            [disabled]="request().status !== 'pending'"
+            (change)="updateBoolean(field, $event)"
+          >
+            {{ field.label }}
+          </mat-checkbox>
+          @if (field.description) {
+            <p class="field-description">{{ field.description }}</p>
+          }
+        } @else if (field.kind === 'enum' || field.kind === 'multi-enum') {
+          <mat-form-field appearance="outline" subscriptSizing="dynamic">
+            <mat-label>{{ field.label }}</mat-label>
+            <mat-select
+              [value]="enumValue(field)"
+              [multiple]="field.kind === 'multi-enum'"
+              [required]="field.required"
+              [disabled]="request().status !== 'pending'"
+              (selectionChange)="updateEnum(field, $event)"
+            >
+              @for (option of field.options; track $index) {
+                <mat-option [value]="option.value">{{ option.label }}</mat-option>
+              }
+            </mat-select>
+            @if (field.description) {
+              <mat-hint>{{ field.description }}</mat-hint>
+            }
+          </mat-form-field>
+        } @else {
+          <mat-form-field appearance="outline" subscriptSizing="dynamic">
+            <mat-label>{{ field.label }}</mat-label>
+            <input
+              matInput
+              [type]="field.kind === 'string' ? field.inputType : 'number'"
+              [value]="textValue(field)"
+              [required]="field.required"
+              [min]="field.minimum"
+              [max]="field.maximum"
+              [minLength]="field.minLength"
+              [maxLength]="field.maxLength"
+              [pattern]="field.pattern"
+              [step]="field.kind === 'integer' ? 1 : 'any'"
+              [disabled]="request().status !== 'pending'"
+              (input)="updateText(field, $event)"
+            />
+            @if (field.description) {
+              <mat-hint>{{ field.description }}</mat-hint>
+            }
+          </mat-form-field>
+        }
+      }
+    </div>
+    <div class="elicitation-actions">
+      <button mat-flat-button type="button" [disabled]="!canAccept()" (click)="submit('accept')">
+        <mat-icon>send</mat-icon>
+        Submit
+      </button>
+      <button mat-button type="button" (click)="submit('decline')">Decline</button>
+      <button mat-button type="button" (click)="submit('cancel')">Cancel</button>
+      @if (request().status === 'submitting') {
+        <mat-spinner diameter="18" aria-label="Submitting response"></mat-spinner>
+      }
+    </div>
+  }
+</section>

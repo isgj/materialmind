@@ -1,0 +1,64 @@
+:host {
+  display: block;
+}
+
+.mcp-elicitation,
+.elicitation-fields {
+  display: grid;
+  gap: 16px;
+}
+
+.elicitation-heading,
+.elicitation-url,
+.elicitation-actions,
+.elicitation-resolution {
+  display: flex;
+  align-items: center;
+}
+
+.elicitation-heading {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.elicitation-heading > div {
+  min-width: 0;
+}
+
+.elicitation-heading p,
+.field-description {
+  margin: 3px 0 0;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.elicitation-url {
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border-radius: 6px;
+  background: var(--mat-sys-surface-container-high);
+}
+
+.elicitation-url code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.elicitation-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.elicitation-resolution {
+  gap: 8px;
+  color: var(--mat-sys-primary);
+}
+
+.field-description {
+  padding-inline-start: 40px;
+}
+
+.disabled-link {
+  pointer-events: none;
+  opacity: 0.38;
+}

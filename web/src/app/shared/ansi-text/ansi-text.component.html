@@ -1,0 +1,12 @@
+@for (segment of segments(); track $index) {
+  <span
+    [class.ansi-bold]="segment.bold"
+    [class.ansi-dim]="segment.dim"
+    [class.ansi-italic]="segment.italic"
+    [class.ansi-hidden]="segment.hidden"
+    [style.color]="segment.foreground"
+    [style.background-color]="segment.background"
+    [style.text-decoration-line]="segment.textDecoration"
+    >{{ segment.text }}</span
+  >
+}

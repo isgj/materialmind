@@ -1,0 +1,290 @@
+<div class="app-frame">
+  <mat-toolbar class="topbar" role="banner">
+    @if (mobile()) {
+      <button
+        mat-icon-button
+        type="button"
+        aria-label="Open navigation"
+        (click)="toggleNavigation()"
+      >
+        <mat-icon>menu</mat-icon>
+      </button>
+    }
+    <a class="brand" routerLink="/" aria-label="MaterialMind home">
+      <span class="brand-mark">
+        <img src="materialmind-icon.svg" alt="" aria-hidden="true" />
+      </span>
+      <span class="brand-label">MaterialMind</span>
+    </a>
+    @if (activeSession(); as activeSession) {
+      <div class="toolbar-session">
+        <span class="toolbar-session-title">{{ activeSession.title }}</span>
+        @if (activeSessionWorkspace(); as workspace) {
+          <span class="toolbar-session-path">{{ workspace.rootPath }}</span>
+        }
+      </div>
+    }
+    <span class="toolbar-spacer"></span>
+    <span
+      class="llm-status"
+      role="img"
+      [class.configured]="agentRuntimeReady()"
+      [matTooltip]="llmStatusLabel()"
+      [attr.aria-label]="llmStatusLabel()"
+    ></span>
+    <button
+      mat-icon-button
+      type="button"
+      routerLink="/settings"
+      routerLinkActive="toolbar-active"
+      matTooltip="Settings"
+      aria-label="Open settings"
+    >
+      <mat-icon>settings</mat-icon>
+    </button>
+  </mat-toolbar>
+
+  @if (state.loading()) {
+    <mat-progress-bar class="global-progress" mode="indeterminate"></mat-progress-bar>
+  }
+
+  <mat-sidenav-container>
+    <mat-sidenav
+      [mode]="mobile() ? 'over' : 'side'"
+      [opened]="!mobile()"
+      [fixedInViewport]="mobile()"
+      [fixedTopGap]="56"
+    >
+      <nav class="workspace-navigation" aria-label="Workspaces and sessions">
+        <div class="workspace-list">
+          @for (group of workspaceGroups(); track group.workspace.id) {
+            <section
+              class="workspace-group"
+              [attr.aria-labelledby]="'workspace-' + group.workspace.id"
+            >
+              <div
+                class="workspace-heading"
+                [class.selected-workspace]="group.workspace.id === state.selectedWorkspaceId()"
+              >
+                <button
+                  type="button"
+                  class="workspace-title"
+                  [id]="'workspace-' + group.workspace.id"
+                  [matTooltip]="group.workspace.rootPath"
+                  [attr.aria-label]="group.workspace.name + ', ' + group.workspace.rootPath"
+                  (click)="selectWorkspace(group.workspace)"
+                >
+                  {{ group.workspace.name }}
+                </button>
+                @if (!group.workspace.available) {
+                  <mat-icon
+                    class="workspace-unavailable"
+                    matTooltip="Workspace directory is unavailable"
+                    aria-label="Workspace directory is unavailable"
+                    >warning</mat-icon
+                  >
+                }
+                <button
+                  mat-icon-button
+                  type="button"
+                  class="compact-icon-button"
+                  [matMenuTriggerFor]="workspaceMenu"
+                  [matMenuTriggerData]="{ workspace: group.workspace }"
+                  [attr.aria-label]="'Actions for ' + group.workspace.name"
+                >
+                  <mat-icon>more_horiz</mat-icon>
+                </button>
+              </div>
+
+              <div class="session-list">
+                @for (session of group.sessions; track session.id) {
+                  <div
+                    class="session-row"
+                    [class.active-session]="session.status !== 'idle'"
+                    [class.running-session]="
+                      session.status === 'queued' || session.status === 'running'
+                    "
+                    routerLinkActive="selected"
+                  >
+                    <a
+                      class="session-link"
+                      [routerLink]="['/session', session.id]"
+                      (click)="prepareSession(session)"
+                    >
+                      <span class="session-icon" aria-hidden="true">
+                        @if (session.status === 'idle') {
+                          <mat-icon>history</mat-icon>
+                        } @else if (session.status === 'waiting') {
+                          <mat-icon class="session-waiting-icon">pending_actions</mat-icon>
+                        } @else {
+                          <mat-spinner
+                            class="session-spinner"
+                            [diameter]="18"
+                            [strokeWidth]="2"
+                          ></mat-spinner>
+                        }
+                      </span>
+                      <span class="session-title">{{ session.title }}</span>
+                      @if (session.status !== 'idle') {
+                        <span class="visually-hidden">
+                          @switch (session.status) {
+                            @case ('queued') {
+                              Starting
+                            }
+                            @case ('waiting') {
+                              Waiting for your approval
+                            }
+                            @default {
+                              Working
+                            }
+                          }
+                        </span>
+                      }
+                    </a>
+                    <button
+                      mat-icon-button
+                      type="button"
+                      class="compact-icon-button session-menu-button"
+                      [matMenuTriggerFor]="sessionMenu"
+                      [matMenuTriggerData]="{ session: session }"
+                      [attr.aria-label]="'Actions for ' + session.title"
+                    >
+                      <mat-icon>more_horiz</mat-icon>
+                    </button>
+                  </div>
+                } @empty {
+                  <div class="empty-sessions">No sessions yet</div>
+                }
+              </div>
+            </section>
+          } @empty {
+            <div class="empty-workspaces">No workspaces yet</div>
+          }
+          <button mat-button type="button" class="add-workspace-button" (click)="addWorkspace()">
+            <mat-icon>add</mat-icon>
+            <span>Add Workspace</span>
+          </button>
+        </div>
+
+        <div class="settings-navigation">
+          <a
+            mat-button
+            class="settings-link settings-root"
+            routerLink="/settings"
+            [class.expanded]="settingsActive()"
+            (click)="closeMobileNavigation()"
+          >
+            <mat-icon>settings</mat-icon>
+            <span>Settings</span>
+          </a>
+          @if (settingsActive()) {
+            <div class="settings-subnavigation" aria-label="Settings sections">
+              <a
+                mat-button
+                class="settings-link"
+                routerLink="/settings/appearance"
+                routerLinkActive="selected"
+                (click)="closeMobileNavigation()"
+              >
+                <mat-icon>palette</mat-icon>
+                <span>Appearance</span>
+              </a>
+              <a
+                mat-button
+                class="settings-link"
+                routerLink="/settings/runtimes"
+                routerLinkActive="selected"
+                (click)="closeMobileNavigation()"
+              >
+                <mat-icon>memory</mat-icon>
+                <span>Agent runtimes</span>
+              </a>
+              <a
+                mat-button
+                class="settings-link"
+                routerLink="/settings/mcp"
+                routerLinkActive="selected"
+                (click)="closeMobileNavigation()"
+              >
+                <mat-icon>extension</mat-icon>
+                <span>MCP servers</span>
+              </a>
+              <a
+                mat-button
+                class="settings-link"
+                routerLink="/settings/models"
+                routerLinkActive="selected"
+                (click)="closeMobileNavigation()"
+              >
+                <mat-icon>hub</mat-icon>
+                <span>LLM providers</span>
+              </a>
+              <a
+                mat-button
+                class="settings-link"
+                routerLink="/settings/data"
+                routerLinkActive="selected"
+                (click)="closeMobileNavigation()"
+              >
+                <mat-icon>storage</mat-icon>
+                <span>Data</span>
+              </a>
+            </div>
+          }
+        </div>
+      </nav>
+    </mat-sidenav>
+
+    <mat-sidenav-content>
+      <router-outlet></router-outlet>
+    </mat-sidenav-content>
+  </mat-sidenav-container>
+</div>
+
+<mat-menu #workspaceMenu="matMenu">
+  <ng-template matMenuContent let-workspace="workspace">
+    <button mat-menu-item type="button" (click)="addSession(workspace)">
+      <mat-icon>add_comment</mat-icon>
+      <span>New session</span>
+    </button>
+    <a
+      mat-menu-item
+      [routerLink]="['/workspace', workspace.id, 'permissions']"
+      (click)="prepareWorkspace(workspace)"
+    >
+      <mat-icon>admin_panel_settings</mat-icon>
+      <span>Permissions</span>
+    </a>
+    <button mat-menu-item type="button" (click)="renameWorkspace(workspace)">
+      <mat-icon>edit</mat-icon>
+      <span>Rename</span>
+    </button>
+    <button mat-menu-item type="button" (click)="deleteWorkspace(workspace)">
+      <mat-icon>delete</mat-icon>
+      <span>Remove</span>
+    </button>
+  </ng-template>
+</mat-menu>
+
+<mat-menu #sessionMenu="matMenu">
+  <ng-template matMenuContent let-session="session">
+    @if (session.runtimeType === 'adk') {
+      <a
+        mat-menu-item
+        [routerLink]="['/session', session.id, 'permissions']"
+        (click)="prepareSession(session)"
+      >
+        <mat-icon>admin_panel_settings</mat-icon>
+        <span>Permissions</span>
+      </a>
+    }
+    <button mat-menu-item type="button" (click)="editSession(session)">
+      <mat-icon>edit</mat-icon>
+      <span>Edit</span>
+    </button>
+    <button mat-menu-item type="button" (click)="deleteSession(session)">
+      <mat-icon>delete</mat-icon>
+      <span>Delete</span>
+    </button>
+  </ng-template>
+</mat-menu>
