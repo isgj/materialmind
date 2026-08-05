@@ -73,7 +73,7 @@ export interface McpToolPermissionsDialogData {
       </div>
     </mat-dialog-content>
     <mat-dialog-actions align="end">
-      <button mat-button type="button" mat-dialog-close>Cancel</button>
+      <button mat-button type="button" (click)="cancel()">Cancel</button>
       <button mat-flat-button type="button" (click)="save()">Apply</button>
     </mat-dialog-actions>
   `,
@@ -178,6 +178,10 @@ export class McpToolPermissionsDialogComponent {
 
   protected confirmationLabel(mode: ToolConfirmationMode): string {
     return mode === 'allow' ? 'allow without asking' : 'ask every time';
+  }
+
+  protected cancel(): void {
+    this.dialogRef.close();
   }
 
   protected save(): void {
