@@ -103,6 +103,7 @@ func (c *contextCompactor) beforeModel(
 
 	workingContents := originalContents
 	prefixContentCount := 0
+	insertedSummaryContents := 0
 	checkpoint, found, err := loadContextCompactionCheckpoint(ctx, originalContents)
 	if err != nil {
 		return nil, fmt.Errorf("load context compaction checkpoint: %w", err)
@@ -113,6 +114,16 @@ func (c *contextCompactor) beforeModel(
 			originalContents[checkpoint.PrefixContentCount:],
 		)
 		prefixContentCount = checkpoint.PrefixContentCount
+		// The summary may be merged into the first retained user content instead
+		// of occupying its own content, so only subtract what was actually inserted.
+		insertedSummaryContents = len(workingContents) -
+			(len(originalContents) - prefixContentCount)
+		if insertedSummaryContents < 0 || insertedSummaryContents > 1 {
+			return nil, fmt.Errorf(
+				"compact model context: invalid summary content count %d",
+				insertedSummaryContents,
+			)
+		}
 		compactedTokens, estimateErr := c.estimateRequestTokens(request, workingContents)
 		if estimateErr != nil {
 			return nil, fmt.Errorf("estimate compacted model context: %w", estimateErr)
@@ -134,7 +145,7 @@ func (c *contextCompactor) beforeModel(
 
 	newPrefixContentCount := cut
 	if found {
-		newPrefixContentCount = prefixContentCount + cut - 1
+		newPrefixContentCount = prefixContentCount + cut - insertedSummaryContents
 	}
 	if newPrefixContentCount <= prefixContentCount ||
 		newPrefixContentCount > len(originalContents) {

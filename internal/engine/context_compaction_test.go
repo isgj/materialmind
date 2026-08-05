@@ -150,6 +150,81 @@ func TestContextCompactorCompactsAndReusesCheckpoint(t *testing.T) {
 	}
 }
 
+func TestContextCompactorRecompactionTracksMergedSummaryPrefix(t *testing.T) {
+	t.Parallel()
+
+	summarizer := &compactionTestModel{summary: "Updated durable context."}
+	compactor := newContextCompactor(summarizer, 30_000, 0)
+	state := compactionTestState{}
+	ctx := &compactionTestContext{
+		StrictContextMock: agent.NewStrictContextMock(context.Background()),
+		state:             state,
+		sessionID:         "session-with-merged-summary",
+	}
+	const toolCallID = "call-large-result"
+	original := []*genai.Content{
+		genai.NewContentFromText("Previously compacted turn.", genai.RoleUser),
+		genai.NewContentFromText("Inspect the latest implementation.", genai.RoleUser),
+		{
+			Role: genai.RoleModel,
+			Parts: []*genai.Part{{
+				FunctionCall: &genai.FunctionCall{
+					ID:   toolCallID,
+					Name: "read_file",
+					Args: map[string]any{"path": "large.go"},
+				},
+			}},
+		},
+		{
+			Role: genai.RoleUser,
+			Parts: []*genai.Part{{
+				FunctionResponse: &genai.FunctionResponse{
+					ID:   toolCallID,
+					Name: "read_file",
+					Response: map[string]any{
+						"content": strings.Repeat("x", 120_000),
+					},
+				},
+			}},
+		},
+		genai.NewContentFromText("Continue with the current task.", genai.RoleUser),
+	}
+	digest, err := contentDigest(original[:1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveContextCompactionCheckpoint(ctx, contextCompactionCheckpoint{
+		Version:            1,
+		PrefixContentCount: 1,
+		PrefixDigest:       digest,
+		Summary:            "Existing durable context.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	request := &model.LLMRequest{Model: "test-model", Contents: original}
+	if _, err := compactor.beforeModel(ctx, request); err != nil {
+		t.Fatalf("beforeModel() error = %v", err)
+	}
+	checkpoint, found, err := loadContextCompactionCheckpoint(ctx, original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || checkpoint.PrefixContentCount != 4 {
+		t.Fatalf("checkpoint = %#v, found = %v; want prefix content count 4", checkpoint, found)
+	}
+	for _, content := range request.Contents {
+		if contentHasFunctionResponse(content) {
+			t.Fatal("compacted request retained a tool result whose call was summarized")
+		}
+	}
+	if len(request.Contents) != 1 || len(request.Contents[0].Parts) != 2 ||
+		!strings.Contains(request.Contents[0].Parts[0].Text, "Updated durable context.") ||
+		request.Contents[0].Parts[1].Text != "Continue with the current task." {
+		t.Fatalf("compacted contents = %#v", request.Contents)
+	}
+}
+
 func TestContextCompactionTranscriptItem(t *testing.T) {
 	t.Parallel()
 

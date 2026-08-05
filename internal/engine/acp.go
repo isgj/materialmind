@@ -107,6 +107,13 @@ func (e *Engine) executeACP(
 			e.hub.Publish(runRecord.ID, "run", updated)
 		}
 		if finalError != "" {
+			slog.Error(
+				"agent run failed",
+				"session_id", runRecord.SessionID,
+				"run_id", runRecord.ID,
+				"runtime", runRecord.RuntimeType,
+				"error", finalError,
+			)
 			e.hub.Publish(runRecord.ID, "run_error", map[string]string{"message": finalError})
 		}
 		e.hub.Publish(runRecord.ID, "done", map[string]string{"status": finalStatus})
