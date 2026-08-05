@@ -81,6 +81,75 @@ func TestManagerDoesNotShadowModernToolCatalogTTL(t *testing.T) {
 	}
 }
 
+func TestManagerAdvertisesSessionWorkspaceAsMCPRoot(t *testing.T) {
+	workspace := t.TempDir()
+	rootsSeen := make(chan []*mcp.Root, 1)
+	mcpServer := mcp.NewServer(
+		&mcp.Implementation{Name: "roots-server", Version: "1.0.0"},
+		nil,
+	)
+	mcpServer.AddTool(
+		&mcp.Tool{
+			Name:        "inspect_roots",
+			Description: "Inspects client roots",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+		},
+		func(
+			ctx context.Context,
+			request *mcp.CallToolRequest,
+		) (*mcp.CallToolResult, error) {
+			result, err := request.Session.ListRoots(ctx, nil)
+			if err != nil {
+				return nil, err
+			}
+			rootsSeen <- result.Roots
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "roots inspected"}},
+			}, nil
+		},
+	)
+	upstream := serveMCPTestServer(t, mcpServer)
+	manager := New(openTestStore(t), Options{})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := manager.Shutdown(ctx); err != nil {
+			t.Errorf("Shutdown() error = %v", err)
+		}
+	})
+
+	definitions, err := manager.SessionTools(
+		context.Background(),
+		"session-roots",
+		workspace,
+		[]store.SessionMCPServer{{
+			MCPServer: store.MCPServer{
+				ID:        "roots-server",
+				Name:      "Roots server",
+				Transport: store.MCPTransportHTTP,
+				URL:       upstream.URL,
+				AuthType:  store.MCPAuthNone,
+			},
+			ConfirmationMode: store.MCPConfirmationAllow,
+		}},
+	)
+	if err != nil || len(definitions) != 1 {
+		t.Fatalf("SessionTools() = %#v, %v", definitions, err)
+	}
+	if _, err := manager.CallTool(context.Background(), definitions[0], map[string]any{}); err != nil {
+		t.Fatalf("CallTool() error = %v", err)
+	}
+
+	roots := <-rootsSeen
+	want, err := workspaceRoot(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(roots) != 1 || roots[0].URI != want.URI || roots[0].Name != want.Name {
+		t.Fatalf("roots/list = %#v, want %#v", roots, []*mcp.Root{want})
+	}
+}
+
 func TestManagerDiscoversReadsAndExpandsSessionContent(t *testing.T) {
 	mcpServer := mcp.NewServer(
 		&mcp.Implementation{Name: "content-server", Version: "1.0.0"},

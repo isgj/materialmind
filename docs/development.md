@@ -58,7 +58,7 @@ The runtime capability inspector starts the configured process and reports its i
 
 ## MCP servers
 
-MaterialMind supports MCP over local stdio and Streamable HTTP. A stdio server is started in the workspace directory and inherits the backend environment. Explicit environment mappings can copy a backend variable into a differently named child variable. HTTP header and bearer-token configuration likewise stores only environment-variable names.
+MaterialMind supports MCP over local stdio and Streamable HTTP. It negotiates the MCP roots capability, with session-scoped connections advertising the workspace directory as their root. ADK session assignments retain session-specific confirmation rules while resolving transport and authentication fields from the current shared server definition; updating that definition closes cached connections so the next use starts with the new configuration. ACP sessions retain their copied descriptors because established external sessions cannot be reconfigured safely. A stdio server is started in the workspace directory and inherits the backend environment. Explicit environment mappings can copy a backend variable into a differently named child variable. HTTP header and bearer-token configuration likewise stores only environment-variable names.
 
 Tool discovery records the protocol version negotiated with the server and displays it in Settings. Modern tool catalogs rely on the MCP SDK's per-page TTL cache; legacy servers retain notification-driven connection caching. MaterialMind advertises form and URL elicitation support. Elicitation pauses the originating tool call for browser input without consuming that call's inactivity timeout; responses remain correlated with the originating run and tool call.
 

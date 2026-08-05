@@ -10,8 +10,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -676,7 +678,17 @@ func (m *Manager) openConnection(
 	cancel context.CancelFunc,
 	control *transportControl,
 ) (*connection, error) {
-	capabilities := &mcp.ClientCapabilities{}
+	capabilities := &mcp.ClientCapabilities{
+		RootsV2: &mcp.RootCapabilities{},
+	}
+	var root *mcp.Root
+	if workingDirectory != "" {
+		var err error
+		root, err = workspaceRoot(workingDirectory)
+		if err != nil {
+			return nil, err
+		}
+	}
 	clientOptions := &mcp.ClientOptions{
 		Capabilities: capabilities,
 		Logger:       slog.Default().With("component", "mcp", "mcp_server_id", server.ID),
@@ -715,6 +727,9 @@ func (m *Manager) openConnection(
 		&mcp.Implementation{Name: "MaterialMind", Version: "development"},
 		clientOptions,
 	)
+	if root != nil {
+		client.AddRoots(root)
+	}
 	var transport mcp.Transport
 	switch server.Transport {
 	case store.MCPTransportStdio:
@@ -775,6 +790,25 @@ func (m *Manager) openConnection(
 		fingerprint: fingerprint,
 		session:     session,
 		cancel:      cancel,
+	}, nil
+}
+
+func workspaceRoot(workingDirectory string) (*mcp.Root, error) {
+	absolute, err := filepath.Abs(workingDirectory)
+	if err != nil {
+		return nil, fmt.Errorf("resolve MCP workspace root: %w", err)
+	}
+	path := filepath.ToSlash(absolute)
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	name := filepath.Base(filepath.Clean(absolute))
+	if name == "." || name == string(filepath.Separator) {
+		name = absolute
+	}
+	return &mcp.Root{
+		URI:  (&url.URL{Scheme: "file", Path: path}).String(),
+		Name: name,
 	}, nil
 }
 

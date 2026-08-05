@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestMCPServerAssignmentsAreSnapshottedPerSession(t *testing.T) {
+func TestMCPServerAssignmentsUseLiveDefinitionsForADKSessions(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("MCP_SOURCE_TOKEN", "configured")
 	dataStore, err := Open(ctx, filepath.Join(t.TempDir(), "materialmind.db"))
@@ -114,6 +114,24 @@ func TestMCPServerAssignmentsAreSnapshottedPerSession(t *testing.T) {
 		workspaceAssignments[0].ToolPermissions[0].ConfirmationMode != MCPConfirmationAllow {
 		t.Fatalf("workspace changed with session = %#v", workspaceAssignments)
 	}
+	agentRecord, err := dataStore.CreateACPAgent(
+		ctx,
+		"Test ACP agent",
+		command,
+		[]string{"--acp-test"},
+	)
+	if err != nil {
+		t.Fatalf("CreateACPAgent() error = %v", err)
+	}
+	acpSession, err := dataStore.CreateACPSession(
+		ctx,
+		workspace.ID,
+		"ACP review",
+		agentRecord.ID,
+	)
+	if err != nil {
+		t.Fatalf("CreateACPSession() error = %v", err)
+	}
 
 	server.Name = "Renamed project tools"
 	server.Arguments = []string{"--updated"}
@@ -124,10 +142,23 @@ func TestMCPServerAssignmentsAreSnapshottedPerSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSessionMCPServers() after server update error = %v", err)
 	}
-	if sessionServers[0].Name != "Project tools" ||
+	if sessionServers[0].Name != "Renamed project tools" ||
 		len(sessionServers[0].Arguments) != 1 ||
-		sessionServers[0].Arguments[0] != "--mcp-test" {
-		t.Fatalf("session snapshot changed with server = %#v", sessionServers[0])
+		sessionServers[0].Arguments[0] != "--updated" ||
+		sessionServers[0].ConfirmationMode != MCPConfirmationAllow ||
+		len(sessionServers[0].ToolPermissions) != 1 ||
+		sessionServers[0].ToolPermissions[0].ConfirmationMode != MCPConfirmationAsk {
+		t.Fatalf("ADK session did not use live server definition = %#v", sessionServers[0])
+	}
+	acpServers, err := dataStore.GetSessionMCPServers(ctx, acpSession.ID)
+	if err != nil {
+		t.Fatalf("GetSessionMCPServers() for ACP session error = %v", err)
+	}
+	if len(acpServers) != 1 ||
+		acpServers[0].Name != "Project tools" ||
+		len(acpServers[0].Arguments) != 1 ||
+		acpServers[0].Arguments[0] != "--mcp-test" {
+		t.Fatalf("ACP session server snapshot changed = %#v", acpServers)
 	}
 
 	if _, err := dataStore.ReplaceWorkspaceMCPServers(ctx, workspace.ID, nil); err != nil {
@@ -138,6 +169,12 @@ func TestMCPServerAssignmentsAreSnapshottedPerSession(t *testing.T) {
 	}
 	if err := dataStore.DeleteSession(ctx, sessionRecord.ID); err != nil {
 		t.Fatalf("DeleteSession() error = %v", err)
+	}
+	if err := dataStore.DeleteMCPServer(ctx, server.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("DeleteMCPServer() with ACP session error = %v, want ErrConflict", err)
+	}
+	if err := dataStore.DeleteSession(ctx, acpSession.ID); err != nil {
+		t.Fatalf("DeleteSession() for ACP session error = %v", err)
 	}
 	if err := dataStore.DeleteMCPServer(ctx, server.ID); err != nil {
 		t.Fatalf("DeleteMCPServer() error = %v", err)

@@ -69,7 +69,7 @@ Tools that advertise an MCP App `ui://` resource can render an inline result. Ma
 
 MaterialMind stores configured MCP bearer tokens and client secrets only in the backend environment. OAuth refresh tokens and dynamically issued client secrets use the configured credential store; access tokens stay in memory. In `auto` mode, an unavailable keyring falls back to memory for the current backend process.
 
-After adding a server, open a workspace's Permissions page. Enable the server, choose whether its tools can run without asking or require confirmation, and optionally override individual tools. MCP servers are disabled by default. New sessions copy the workspace's enabled servers, server configuration, and confirmation rules; changing the workspace later does not rewrite existing sessions.
+After adding a server, open a workspace's Permissions page. Enable the server, choose whether its tools can run without asking or require confirmation, and optionally override individual tools. MCP servers are disabled by default. New sessions copy the workspace's enabled servers and confirmation rules; changing those workspace assignments later does not rewrite existing sessions. ADK sessions resolve the current command, arguments, environment, URL, and authentication configuration from the shared MCP server definition, so edits to that definition apply when the server reconnects.
 
 For MaterialMind ADK sessions, an MCP call that requires confirmation appears in the activity timeline with the server, tool, and arguments. Allowing it returns the MCP result to the model; refusing it returns the refusal and optional reason.
 

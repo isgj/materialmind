@@ -317,15 +317,29 @@ func (s *Store) ReplaceWorkspaceMCPServers(
 }
 
 func (s *Store) GetSessionMCPServers(ctx context.Context, sessionID string) ([]SessionMCPServer, error) {
-	if _, err := s.GetSession(ctx, sessionID); err != nil {
+	sessionRecord, err := s.GetSession(ctx, sessionID)
+	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT
+	query := `SELECT
 		mcp_server_id, name, transport, command, arguments_json, environment_json, url,
 		headers_json, auth_type, bearer_token_env_var, oauth_client_mode, oauth_client_id,
 		oauth_client_secret_env_var, oauth_scopes_json, confirmation_mode
-		FROM session_mcp_servers WHERE session_id = ? ORDER BY lower(name), mcp_server_id`,
-		sessionID)
+		FROM session_mcp_servers WHERE session_id = ? ORDER BY lower(name), mcp_server_id`
+	if sessionRecord.RuntimeType == RuntimeADK {
+		query = `SELECT
+			configured.mcp_server_id, current.name, current.transport, current.command,
+			current.arguments_json, current.environment_json, current.url,
+			current.headers_json, current.auth_type, current.bearer_token_env_var,
+			current.oauth_client_mode, current.oauth_client_id,
+			current.oauth_client_secret_env_var, current.oauth_scopes_json,
+			configured.confirmation_mode
+			FROM session_mcp_servers AS configured
+			JOIN mcp_servers AS current ON current.id = configured.mcp_server_id
+			WHERE configured.session_id = ?
+			ORDER BY lower(current.name), configured.mcp_server_id`
+	}
+	rows, err := s.db.QueryContext(ctx, query, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("list session MCP servers: %w", err)
 	}
