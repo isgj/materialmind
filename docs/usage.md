@@ -83,7 +83,7 @@ MaterialMind can inspect directories, read files by line range, search with `rg`
 
 Tools can be configured to run without interruption or ask before every call. Filesystem tools also have a hard boundary: workspace, nearest Git or Jujutsu repository root, or all files visible to the backend process.
 
-`run_command` asks before every call by default. Approved commands run with the backend user's permissions and inherit the backend environment.
+`run_command` asks before every call by default. Approved commands run with the backend user's permissions and inherit the backend environment. When several commands in one turn are awaiting approval, each starts as soon as it is approved and can run concurrently with commands already in progress. Pending approvals are scoped to the active run and are not saved as replayable command results.
 
 MaterialMind runtime and ACP agents can explicitly read and replace concise Markdown session notes. Notes are limited to 16 KiB and use revisions to prevent parallel updates from overwriting each other. Their contents are not loaded into prompts automatically and context compaction never reads or changes them. Each read or update remains visible in the activity timeline; users can change either tool from automatic execution to confirmation in workspace or session permissions.
 

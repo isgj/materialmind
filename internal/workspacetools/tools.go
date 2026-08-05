@@ -62,6 +62,8 @@ type ReadFileResult struct {
 
 type Options struct {
 	CommandOutput      CommandOutputSink
+	CommandResult      CommandResultSink
+	RequestApproval    ToolApprovalHandler
 	AskUser            AskUserHandler
 	SessionNotes       SessionNotesHandlers
 	YieldAfterApproval func(agent.Context) bool
@@ -174,7 +176,13 @@ func New(rootPath string, permissions []toolpolicy.Permission, skillCatalog agen
 		return nil, fmt.Errorf("create update_session_notes tool: %w", err)
 	}
 	runCommandPermission, _ := toolpolicy.PermissionFor(permissions, toolpolicy.ToolRunCommand)
-	runCommand, err := newRunCommandTool(rootPath, runCommandPermission, options.CommandOutput)
+	runCommand, err := newRunCommandTool(
+		rootPath,
+		runCommandPermission,
+		options.CommandOutput,
+		options.CommandResult,
+		options.RequestApproval,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("create run_command tool: %w", err)
 	}

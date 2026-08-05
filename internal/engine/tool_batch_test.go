@@ -67,6 +67,35 @@ func TestMixedToolBatchModelDefersDelegationsTogether(t *testing.T) {
 	}
 }
 
+func TestSplitMixedToolBatchKeepsCommandsWithOrdinarySiblings(t *testing.T) {
+	response := &model.LLMResponse{Content: &genai.Content{
+		Role: genai.RoleModel,
+		Parts: []*genai.Part{
+			{FunctionCall: &genai.FunctionCall{ID: "ordinary", Name: "grep"}},
+			{FunctionCall: &genai.FunctionCall{ID: "command-1", Name: "run_command"}},
+			{FunctionCall: &genai.FunctionCall{ID: "delegation", Name: "workspace_explorer"}},
+			{FunctionCall: &genai.FunctionCall{ID: "command-2", Name: "run_command"}},
+		},
+	}}
+
+	immediate, deferred, err := splitMixedToolBatch(response)
+	if err != nil {
+		t.Fatalf("splitMixedToolBatch() error = %v", err)
+	}
+	if got := functionCallNames(immediate); !equalStrings(
+		got,
+		[]string{"grep", "run_command", "run_command"},
+	) {
+		t.Fatalf("immediate call names = %#v", got)
+	}
+	if got := functionCallNames(deferred); !equalStrings(
+		got,
+		[]string{"workspace_explorer"},
+	) {
+		t.Fatalf("deferred call names = %#v", got)
+	}
+}
+
 func TestMixedToolBatchKeepsDelegationsPendingAcrossApprovalYield(t *testing.T) {
 	base := &mixedToolBatchScriptedModel{}
 	scheduled := &mixedToolBatchModel{LLM: base}

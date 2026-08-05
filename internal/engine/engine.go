@@ -38,15 +38,30 @@ var (
 	ErrEngineShuttingDown = errors.New("agent engine is shutting down")
 )
 
+func finalRunOutcome(ctx context.Context, status, message string) (string, string) {
+	if cause := context.Cause(ctx); cause != nil {
+		if !errors.Is(cause, context.Canceled) {
+			return "failed", cause.Error()
+		}
+		if status == "completed" {
+			return "cancelled", message
+		}
+	}
+	return status, message
+}
+
 type activeRun struct {
-	runID                  string
-	cancel                 context.CancelFunc
-	done                   chan struct{}
-	pendingApprovals       map[string]*pendingToolApproval
-	nextApprovalResolution uint64
-	pendingUserInputs      map[string]*pendingUserInput
-	pendingMCPElicitations map[string]*pendingMCPElicitation
-	acpHandler             *acpRunHandler
+	runID                   string
+	cancel                  context.CancelFunc
+	cancelWithCause         context.CancelCauseFunc
+	done                    chan struct{}
+	pendingApprovals        map[string]*pendingToolApproval
+	publishedCommandResults map[string]struct{}
+	approvalFailure         error
+	nextApprovalResolution  uint64
+	pendingUserInputs       map[string]*pendingUserInput
+	pendingMCPElicitations  map[string]*pendingMCPElicitation
+	acpHandler              *acpRunHandler
 }
 
 type Engine struct {
@@ -133,12 +148,15 @@ func (e *Engine) WaitingForUser(sessionID string) bool {
 	if !ok {
 		return false
 	}
-	for _, approval := range active.pendingApprovals {
-		if approval.resolutionOrder == 0 {
-			return true
+	if active.approvalFailure == nil {
+		for _, approval := range active.pendingApprovals {
+			if approval.resolutionOrder == 0 {
+				return true
+			}
 		}
 	}
-	return len(active.pendingUserInputs) > 0 || len(active.pendingMCPElicitations) > 0
+	return active.approvalFailure == nil &&
+		(len(active.pendingUserInputs) > 0 || len(active.pendingMCPElicitations) > 0)
 }
 
 func (e *Engine) CreateSession(ctx context.Context, workspaceID, title string, llmModelID *string) (store.AppSession, error) {
@@ -323,15 +341,17 @@ func (e *Engine) StartRun(
 		e.mu.Unlock()
 		return store.Run{}, err
 	}
-	runContext, cancel := context.WithCancel(context.Background())
+	runContext, cancelWithCause := context.WithCancelCause(context.Background())
 	done := make(chan struct{})
 	e.active[sessionID] = &activeRun{
-		runID:                  run.ID,
-		cancel:                 cancel,
-		done:                   done,
-		pendingApprovals:       make(map[string]*pendingToolApproval),
-		pendingUserInputs:      make(map[string]*pendingUserInput),
-		pendingMCPElicitations: make(map[string]*pendingMCPElicitation),
+		runID:                   run.ID,
+		cancel:                  func() { cancelWithCause(nil) },
+		cancelWithCause:         cancelWithCause,
+		done:                    done,
+		pendingApprovals:        make(map[string]*pendingToolApproval),
+		publishedCommandResults: make(map[string]struct{}),
+		pendingUserInputs:       make(map[string]*pendingUserInput),
+		pendingMCPElicitations:  make(map[string]*pendingMCPElicitation),
 	}
 	e.hub.Create(run.ID)
 	e.mu.Unlock()
@@ -385,11 +405,12 @@ func (e *Engine) startACPRun(
 		e.mu.Unlock()
 		return store.Run{}, err
 	}
-	runContext, cancel := context.WithCancel(context.Background())
+	runContext, cancelWithCause := context.WithCancelCause(context.Background())
 	done := make(chan struct{})
 	e.active[sessionRecord.ID] = &activeRun{
 		runID:                  run.ID,
-		cancel:                 cancel,
+		cancel:                 func() { cancelWithCause(nil) },
+		cancelWithCause:        cancelWithCause,
 		done:                   done,
 		pendingApprovals:       make(map[string]*pendingToolApproval),
 		pendingUserInputs:      make(map[string]*pendingUserInput),
@@ -428,6 +449,51 @@ func (e *Engine) CancelRun(ctx context.Context, runID string) (store.Run, error)
 	return e.store.GetRun(ctx, runID)
 }
 
+func (e *Engine) workspaceToolOptions(runRecord store.Run) workspacetools.Options {
+	return workspacetools.Options{
+		CommandOutput: func(event workspacetools.CommandOutputEvent) {
+			e.hub.Publish(runRecord.ID, "command_output", event)
+		},
+		CommandResult: func(event workspacetools.CommandResultEvent) {
+			e.publishCommandResult(runRecord, event)
+		},
+		RequestApproval: func(
+			toolContext context.Context,
+			request workspacetools.ToolApprovalRequest,
+		) (workspacetools.ToolApprovalDecision, error) {
+			return e.requestWorkspaceToolApproval(
+				toolContext,
+				runRecord.SessionID,
+				runRecord.ID,
+				request,
+			)
+		},
+		YieldAfterApproval: func(toolContext agent.Context) bool {
+			if toolContext.Actions().SkipSummarization {
+				enableApprovalYield(toolContext)
+			}
+			return shouldYieldAfterApproval(toolContext)
+		},
+		AskUser: func(
+			toolContext context.Context,
+			toolCallID string,
+			questions []workspacetools.AskUserQuestion,
+		) ([]workspacetools.AskUserAnswer, error) {
+			return e.requestUserInput(
+				toolContext,
+				runRecord.SessionID,
+				runRecord.ID,
+				toolCallID,
+				questions,
+			)
+		},
+		SessionNotes: workspacetools.SessionNotesHandlers{
+			Read:   e.readSessionNotes,
+			Update: e.updateSessionNotes,
+		},
+	}
+}
+
 func (e *Engine) execute(
 	ctx context.Context,
 	runRecord store.Run,
@@ -445,9 +511,7 @@ func (e *Engine) execute(
 			finalStatus = "failed"
 			finalError = fmt.Sprintf("agent run panicked: %v", recovered)
 		}
-		if ctx.Err() != nil && finalStatus == "completed" {
-			finalStatus = "cancelled"
-		}
+		finalStatus, finalError = finalRunOutcome(ctx, finalStatus, finalError)
 		updated, err := e.store.UpdateRun(context.Background(), runRecord.ID, finalStatus, runRecord.InvocationID, finalError)
 		if err == nil {
 			e.hub.Publish(runRecord.ID, "run", updated)
@@ -505,34 +569,12 @@ func (e *Engine) execute(
 	}
 	subAgentModel := &approvalYieldModel{LLM: modelAdapter}
 	coordinatedModel := &approvalYieldModel{LLM: &mixedToolBatchModel{LLM: modelAdapter}}
-	tools, err := workspacetools.New(workspace.RootPath, permissions, skillCatalog, workspacetools.Options{
-		CommandOutput: func(event workspacetools.CommandOutputEvent) {
-			e.hub.Publish(runRecord.ID, "command_output", event)
-		},
-		YieldAfterApproval: func(toolContext agent.Context) bool {
-			if toolContext.Actions().SkipSummarization {
-				enableApprovalYield(toolContext)
-			}
-			return shouldYieldAfterApproval(toolContext)
-		},
-		AskUser: func(
-			toolContext context.Context,
-			toolCallID string,
-			questions []workspacetools.AskUserQuestion,
-		) ([]workspacetools.AskUserAnswer, error) {
-			return e.requestUserInput(
-				toolContext,
-				runRecord.SessionID,
-				runRecord.ID,
-				toolCallID,
-				questions,
-			)
-		},
-		SessionNotes: workspacetools.SessionNotesHandlers{
-			Read:   e.readSessionNotes,
-			Update: e.updateSessionNotes,
-		},
-	})
+	tools, err := workspacetools.New(
+		workspace.RootPath,
+		permissions,
+		skillCatalog,
+		e.workspaceToolOptions(runRecord),
+	)
 	if err != nil {
 		finalStatus, finalError = "failed", err.Error()
 		return
@@ -777,6 +819,47 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 	return errors.Join(mcpErr, acpErr)
 }
 
+func (e *Engine) publishCommandResult(
+	runRecord store.Run,
+	event workspacetools.CommandResultEvent,
+) {
+	if event.ToolCallID == "" {
+		return
+	}
+	e.mu.Lock()
+	active := e.active[runRecord.SessionID]
+	if active == nil || active.runID != runRecord.ID {
+		e.mu.Unlock()
+		return
+	}
+	if active.publishedCommandResults == nil {
+		active.publishedCommandResults = make(map[string]struct{})
+	}
+	if _, published := active.publishedCommandResults[event.ToolCallID]; published {
+		e.mu.Unlock()
+		return
+	}
+	active.publishedCommandResults[event.ToolCallID] = struct{}{}
+	e.mu.Unlock()
+
+	e.hub.Publish(runRecord.ID, "tool_result", map[string]any{
+		"id":     event.ToolCallID,
+		"name":   toolpolicy.ToolRunCommand,
+		"output": event.Output,
+	})
+}
+
+func (e *Engine) commandResultWasPublished(runRecord store.Run, toolCallID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	active := e.active[runRecord.SessionID]
+	if active == nil || active.runID != runRecord.ID {
+		return false
+	}
+	_, published := active.publishedCommandResults[toolCallID]
+	return published
+}
+
 func (e *Engine) publishEvent(runRecord store.Run, event *session.Event) {
 	if event.Content == nil {
 		return
@@ -808,6 +891,10 @@ func (e *Engine) publishEvent(runRecord store.Run, event *session.Event) {
 			if isConfirmationCall(part.FunctionResponse.Name) ||
 				part.FunctionResponse.Name == finishTaskToolName ||
 				isPendingToolResponse(event, part.FunctionResponse.ID) {
+				continue
+			}
+			if part.FunctionResponse.Name == toolpolicy.ToolRunCommand &&
+				e.commandResultWasPublished(runRecord, part.FunctionResponse.ID) {
 				continue
 			}
 			if _, ok := subAgentProfileForName(part.FunctionResponse.Name); ok {

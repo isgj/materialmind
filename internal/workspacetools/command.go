@@ -68,28 +68,46 @@ type CommandOutputEvent struct {
 
 type CommandOutputSink func(CommandOutputEvent)
 
+type CommandResultEvent struct {
+	ToolCallID string         `json:"toolCallId"`
+	Output     map[string]any `json:"output"`
+}
+
+type CommandResultSink func(CommandResultEvent)
+
 type commandConfirmationPayload struct {
-	Kind             string   `json:"kind"`
-	Command          string   `json:"command"`
-	Args             []string `json:"args"`
-	Executable       string   `json:"executable"`
-	WorkingDirectory string   `json:"workingDirectory"`
-	TimeoutSeconds   int      `json:"timeoutSeconds"`
+	Kind                 string   `json:"kind"`
+	Command              string   `json:"command"`
+	Args                 []string `json:"args"`
+	Executable           string   `json:"executable"`
+	InvocationExecutable string   `json:"invocationExecutable"`
+	WorkingDirectory     string   `json:"workingDirectory"`
+	TimeoutSeconds       int      `json:"timeoutSeconds"`
 }
 
 type resolvedCommand struct {
-	command          string
-	args             []string
-	executable       string
-	workingDirectory string
-	timeout          time.Duration
+	command              string
+	args                 []string
+	executable           string
+	invocationExecutable string
+	workingDirectory     string
+	timeout              time.Duration
 }
 
-func newRunCommandTool(rootPath string, permission toolpolicy.Permission, sink CommandOutputSink) (tool.Tool, error) {
+func newRunCommandTool(
+	rootPath string,
+	permission toolpolicy.Permission,
+	outputSink CommandOutputSink,
+	resultSink CommandResultSink,
+	requestApproval ToolApprovalHandler,
+) (tool.Tool, error) {
 	access, err := newFilesystemAccess(rootPath, permission.FilesystemScope)
 	if err != nil {
 		return nil, err
 	}
+	// This wrapper is shared by all invocations so concurrent sibling commands
+	// cannot call a non-thread-safe output sink at the same time.
+	outputSink = synchronizedCommandOutputSink(outputSink)
 	baseTool, err := functiontool.New(
 		functiontool.Config{
 			Name: toolpolicy.ToolRunCommand,
@@ -97,39 +115,127 @@ func newRunCommandTool(rootPath string, permission toolpolicy.Permission, sink C
 				"Use an explicit shell executable only when shell syntax is required. The working directory is constrained by policy, but the process itself has the backend operating-system user's access. " + access.Description(),
 		},
 		func(ctx agent.Context, args RunCommandArgs) (RunCommandResult, error) {
-			return runCommandWithPolicy(access, permission, ctx, args, sink)
+			result, runErr := runCommandWithApprovalPolicy(
+				access,
+				permission,
+				ctx,
+				args,
+				outputSink,
+				requestApproval,
+			)
+			emitCommandResult(ctx, result, runErr, resultSink)
+			return result, runErr
 		},
 	)
 	if err != nil {
 		return nil, err
 	}
-	return newApprovalAwareTool(baseTool, func(input map[string]any, confirmation *toolconfirmation.ToolConfirmation) (map[string]any, error) {
-		args, err := decodeRunCommandArgs(input)
+	approvalAware, err := newApprovalAwareTool(
+		baseTool,
+		func(input map[string]any, confirmation *toolconfirmation.ToolConfirmation) (map[string]any, error) {
+			args, err := decodeRunCommandArgs(input)
+			if err != nil {
+				return nil, err
+			}
+			resolved, err := resolveCommand(access, args)
+			if err != nil {
+				return nil, err
+			}
+			return commandResultMap(RunCommandResult{
+				State:            "denied",
+				Command:          resolved.command,
+				Args:             resolved.args,
+				WorkingDirectory: resolved.workingDirectory,
+				TimeoutSeconds:   int(resolved.timeout / time.Second),
+				Reason:           approvalReason(confirmation),
+			})
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	return approvalAware, nil
+}
+
+func emitCommandResult(
+	ctx agent.Context,
+	result RunCommandResult,
+	runErr error,
+	sink CommandResultSink,
+) {
+	if sink == nil || ctx.FunctionCallID() == "" ||
+		result.State == "approval_required" || ctx.Err() != nil {
+		return
+	}
+	var output map[string]any
+	if runErr != nil {
+		output = map[string]any{"error": runErr.Error()}
+	} else {
+		mapped, err := commandResultMap(result)
 		if err != nil {
-			return nil, err
+			return
 		}
-		resolved, err := resolveCommand(access, args)
-		if err != nil {
-			return nil, err
-		}
-		return commandResultMap(RunCommandResult{
-			State:            "denied",
-			Command:          resolved.command,
-			Args:             resolved.args,
-			WorkingDirectory: resolved.workingDirectory,
-			TimeoutSeconds:   int(resolved.timeout / time.Second),
-			Reason:           approvalReason(confirmation),
-		})
+		output = mapped
+	}
+	sink(CommandResultEvent{
+		ToolCallID: ctx.FunctionCallID(),
+		Output:     output,
 	})
 }
 
-func runCommandWithPolicy(access filesystemAccess, permission toolpolicy.Permission, ctx agent.Context, args RunCommandArgs, sink CommandOutputSink) (RunCommandResult, error) {
+func runCommandWithPolicy(
+	access filesystemAccess,
+	permission toolpolicy.Permission,
+	ctx agent.Context,
+	args RunCommandArgs,
+	sink CommandOutputSink,
+) (RunCommandResult, error) {
+	return runCommandWithApprovalPolicy(access, permission, ctx, args, sink, nil)
+}
+
+func runCommandWithApprovalPolicy(
+	access filesystemAccess,
+	permission toolpolicy.Permission,
+	ctx agent.Context,
+	args RunCommandArgs,
+	sink CommandOutputSink,
+	requestApproval ToolApprovalHandler,
+) (RunCommandResult, error) {
 	resolved, err := resolveCommand(access, args)
 	if err != nil {
 		return RunCommandResult{}, err
 	}
 	confirmation := ctx.ToolConfirmation()
 	if confirmation == nil && permission.ConfirmationMode == toolpolicy.ConfirmationAsk {
+		if requestApproval != nil {
+			decision, approvalErr := requestCommandApproval(
+				ctx,
+				args,
+				resolved,
+				requestApproval,
+			)
+			if approvalErr != nil {
+				return RunCommandResult{}, approvalErr
+			}
+			if !decision.Approved {
+				result := commandResult(resolved, "denied")
+				result.Reason = decision.Reason
+				return result, nil
+			}
+			revalidated, revalidationErr := resolveCommand(access, args)
+			if revalidationErr != nil {
+				return RunCommandResult{}, fmt.Errorf(
+					"revalidate approved command: %w",
+					revalidationErr,
+				)
+			}
+			if !sameCommand(revalidated, resolved) {
+				return RunCommandResult{}, fmt.Errorf(
+					"approved command does not match the requested command",
+				)
+			}
+			return executeCommand(ctx, revalidated, sink)
+		}
 		if err := requestCommandConfirmation(ctx, resolved); err != nil {
 			return RunCommandResult{}, err
 		}
@@ -153,20 +259,71 @@ func runCommandWithPolicy(access filesystemAccess, permission toolpolicy.Permiss
 	return executeCommand(ctx, resolved, sink)
 }
 
-func requestCommandConfirmation(ctx agent.Context, command resolvedCommand) error {
-	payload := commandConfirmationPayload{
-		Kind:             toolpolicy.ToolRunCommand,
-		Command:          command.command,
-		Args:             cloneStrings(command.args),
-		Executable:       command.executable,
-		WorkingDirectory: command.workingDirectory,
-		TimeoutSeconds:   int(command.timeout / time.Second),
+func requestCommandApproval(
+	ctx agent.Context,
+	args RunCommandArgs,
+	command resolvedCommand,
+	handler ToolApprovalHandler,
+) (ToolApprovalDecision, error) {
+	payload := commandApprovalPayload(command)
+	decision, err := handler(ctx, ToolApprovalRequest{
+		ToolCallID: ctx.FunctionCallID(),
+		ToolName:   toolpolicy.ToolRunCommand,
+		Input:      commandApprovalInput(args),
+		Payload:    commandApprovalPayloadMap(payload),
+		Hint:       fmt.Sprintf("Allow the agent to run %s?", command.command),
+	})
+	if err != nil {
+		return ToolApprovalDecision{}, fmt.Errorf("request command approval: %w", err)
 	}
+	return decision, nil
+}
+
+func requestCommandConfirmation(ctx agent.Context, command resolvedCommand) error {
+	payload := commandApprovalPayload(command)
 	if err := ctx.RequestConfirmation(fmt.Sprintf("Allow the agent to run %s?", command.command), payload); err != nil {
 		return fmt.Errorf("request command approval: %w", err)
 	}
 	ctx.Actions().SkipSummarization = true
 	return nil
+}
+
+func commandApprovalPayload(command resolvedCommand) commandConfirmationPayload {
+	return commandConfirmationPayload{
+		Kind:                 toolpolicy.ToolRunCommand,
+		Command:              command.command,
+		Args:                 cloneStrings(command.args),
+		Executable:           command.executable,
+		InvocationExecutable: command.invocationExecutable,
+		WorkingDirectory:     command.workingDirectory,
+		TimeoutSeconds:       int(command.timeout / time.Second),
+	}
+}
+
+func commandApprovalInput(args RunCommandArgs) map[string]any {
+	input := map[string]any{"command": args.Command}
+	if len(args.Args) > 0 {
+		input["args"] = cloneStrings(args.Args)
+	}
+	if args.WorkingDirectory != "" {
+		input["workingDirectory"] = args.WorkingDirectory
+	}
+	if args.TimeoutSeconds != 0 {
+		input["timeoutSeconds"] = args.TimeoutSeconds
+	}
+	return input
+}
+
+func commandApprovalPayloadMap(payload commandConfirmationPayload) map[string]any {
+	return map[string]any{
+		"kind":                 payload.Kind,
+		"command":              payload.Command,
+		"args":                 cloneStrings(payload.Args),
+		"executable":           payload.Executable,
+		"invocationExecutable": payload.InvocationExecutable,
+		"workingDirectory":     payload.WorkingDirectory,
+		"timeoutSeconds":       payload.TimeoutSeconds,
+	}
 }
 
 func approvedCommand(confirmation *toolconfirmation.ToolConfirmation) (resolvedCommand, error) {
@@ -187,12 +344,23 @@ func approvedCommand(confirmation *toolconfirmation.ToolConfirmation) (resolvedC
 	if payload.TimeoutSeconds <= 0 || payload.TimeoutSeconds > int(maxCommandTimeout/time.Second) {
 		return resolvedCommand{}, fmt.Errorf("command approval payload has invalid timeout")
 	}
+	invocationExecutable := payload.InvocationExecutable
+	if invocationExecutable == "" {
+		// Confirmations created before invocationExecutable was added used the
+		// executable field for both the PATH lookup result and canonical target.
+		invocationExecutable = payload.Executable
+		payload.Executable, err = validateCommandExecutable(payload.Executable)
+		if err != nil {
+			return resolvedCommand{}, fmt.Errorf("validate approved executable: %w", err)
+		}
+	}
 	return resolvedCommand{
-		command:          payload.Command,
-		args:             cloneStrings(payload.Args),
-		executable:       payload.Executable,
-		workingDirectory: payload.WorkingDirectory,
-		timeout:          time.Duration(payload.TimeoutSeconds) * time.Second,
+		command:              payload.Command,
+		args:                 cloneStrings(payload.Args),
+		executable:           payload.Executable,
+		invocationExecutable: invocationExecutable,
+		workingDirectory:     payload.WorkingDirectory,
+		timeout:              time.Duration(payload.TimeoutSeconds) * time.Second,
 	}, nil
 }
 
@@ -228,7 +396,7 @@ func resolveCommand(access filesystemAccess, args RunCommandArgs) (resolvedComma
 	if err != nil {
 		return resolvedCommand{}, err
 	}
-	executable, err := resolveCommandExecutable(command, workingDirectory)
+	executable, invocationExecutable, err := resolveCommandExecutable(command, workingDirectory)
 	if err != nil {
 		return resolvedCommand{}, err
 	}
@@ -240,11 +408,12 @@ func resolveCommand(access filesystemAccess, args RunCommandArgs) (resolvedComma
 		return resolvedCommand{}, fmt.Errorf("timeoutSeconds must be between 1 and %d", int(maxCommandTimeout/time.Second))
 	}
 	return resolvedCommand{
-		command:          command,
-		args:             cloneStrings(args.Args),
-		executable:       executable,
-		workingDirectory: workingDirectory,
-		timeout:          timeout,
+		command:              command,
+		args:                 cloneStrings(args.Args),
+		executable:           executable,
+		invocationExecutable: invocationExecutable,
+		workingDirectory:     workingDirectory,
+		timeout:              timeout,
 	}, nil
 }
 
@@ -275,22 +444,29 @@ func resolveCommandWorkingDirectory(access filesystemAccess, rawPath string) (st
 	return filepath.Clean(realDirectory), nil
 }
 
-func resolveCommandExecutable(command, workingDirectory string) (string, error) {
-	if filepath.IsAbs(command) {
-		return validateCommandExecutable(command)
+func resolveCommandExecutable(command, workingDirectory string) (string, string, error) {
+	invocationExecutable := command
+	if !filepath.IsAbs(command) {
+		if filepath.Dir(command) != "." {
+			invocationExecutable = filepath.Join(workingDirectory, command)
+		} else {
+			resolved, err := exec.LookPath(command)
+			if err != nil {
+				return "", "", fmt.Errorf("find executable %q: %w", command, err)
+			}
+			invocationExecutable = resolved
+		}
 	}
-	if filepath.Dir(command) != "." {
-		return validateCommandExecutable(filepath.Join(workingDirectory, command))
-	}
-	resolved, err := exec.LookPath(command)
+	absolute, err := filepath.Abs(invocationExecutable)
 	if err != nil {
-		return "", fmt.Errorf("find executable %q: %w", command, err)
+		return "", "", fmt.Errorf("resolve executable %q: %w", command, err)
 	}
-	absolute, err := filepath.Abs(resolved)
+	invocationExecutable = filepath.Clean(absolute)
+	canonicalExecutable, err := validateCommandExecutable(invocationExecutable)
 	if err != nil {
-		return "", fmt.Errorf("resolve executable %q: %w", command, err)
+		return "", "", err
 	}
-	return filepath.Clean(absolute), nil
+	return canonicalExecutable, invocationExecutable, nil
 }
 
 func validateCommandExecutable(path string) (string, error) {
@@ -317,7 +493,10 @@ func executeCommand(ctx context.Context, command resolvedCommand, sink CommandOu
 	sink = synchronizedCommandOutputSink(sink)
 	stdout := newBoundedCommandOutput(commandOutputCallback(ctx, sink, "stdout"))
 	stderr := newBoundedCommandOutput(commandOutputCallback(ctx, sink, "stderr"))
-	process := exec.CommandContext(commandContext, command.executable, command.args...)
+	process := exec.CommandContext(commandContext, command.invocationExecutable, command.args...)
+	// Preserve invocation-name semantics for symlink-dispatched programs and
+	// the invocation path passed to shebang interpreters.
+	process.Args[0] = command.command
 	process.Dir = command.workingDirectory
 	process.Env = os.Environ()
 	process.Stdout = stdout
@@ -410,6 +589,7 @@ func cloneStrings(values []string) []string {
 func sameCommand(left, right resolvedCommand) bool {
 	return left.command == right.command &&
 		left.executable == right.executable &&
+		left.invocationExecutable == right.invocationExecutable &&
 		left.workingDirectory == right.workingDirectory &&
 		left.timeout == right.timeout &&
 		slices.Equal(left.args, right.args)

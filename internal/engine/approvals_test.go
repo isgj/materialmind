@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"google.golang.org/genai"
 
 	"materialmind/internal/store"
+	"materialmind/internal/workspacetools"
 )
 
 func TestToolApprovalRequestsExtractsOriginalFetch(t *testing.T) {
@@ -185,6 +188,312 @@ func TestWaitForNextToolApprovalUsesResolutionOrder(t *testing.T) {
 	}
 	if _, pending := active.pendingApprovals["approval-2"]; !pending {
 		t.Fatal("unresolved approval was removed")
+	}
+}
+
+func TestRequestWorkspaceToolApprovalResumesEachResolvedCallIndependently(t *testing.T) {
+	hub := NewHub()
+	hub.Create("run-1")
+	engine := &Engine{
+		hub: hub,
+		active: map[string]*activeRun{
+			"session-1": {
+				runID:             "run-1",
+				pendingApprovals:  make(map[string]*pendingToolApproval),
+				pendingUserInputs: make(map[string]*pendingUserInput),
+			},
+		},
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	events, ok := hub.Subscribe(ctx, "run-1", 0)
+	if !ok {
+		t.Fatal("Subscribe() ok = false")
+	}
+
+	type approvalResult struct {
+		toolCallID string
+		decision   workspacetools.ToolApprovalDecision
+		err        error
+	}
+	results := make(chan approvalResult, 2)
+	for _, toolCallID := range []string{"command-1", "command-2"} {
+		go func() {
+			decision, err := engine.requestWorkspaceToolApproval(
+				ctx,
+				"session-1",
+				"run-1",
+				workspacetools.ToolApprovalRequest{
+					ToolCallID: toolCallID,
+					ToolName:   "run_command",
+					Input:      map[string]any{"command": toolCallID},
+					Payload:    map[string]any{"kind": "run_command"},
+				},
+			)
+			results <- approvalResult{toolCallID: toolCallID, decision: decision, err: err}
+		}()
+	}
+
+	approvalIDs := make(map[string]string, 2)
+	for len(approvalIDs) < 2 {
+		select {
+		case event := <-events:
+			if event.Type != "tool_approval" {
+				continue
+			}
+			request, requestOK := event.Data.(ToolApprovalRequest)
+			if !requestOK {
+				t.Fatalf("tool approval event data = %T", event.Data)
+			}
+			approvalIDs[request.ToolCallID] = request.ID
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for tool approvals: %v", ctx.Err())
+		}
+	}
+
+	resolveTestApproval(engine, "session-1", approvalIDs["command-2"], ToolApprovalResolution{
+		ID:         approvalIDs["command-2"],
+		ToolCallID: "command-2",
+		Approved:   true,
+	})
+	select {
+	case result := <-results:
+		if result.err != nil || result.toolCallID != "command-2" || !result.decision.Approved {
+			t.Fatalf("first resumed approval = %#v", result)
+		}
+	case <-ctx.Done():
+		t.Fatalf("resolved command did not resume: %v", ctx.Err())
+	}
+
+	resolveTestApproval(engine, "session-1", approvalIDs["command-1"], ToolApprovalResolution{
+		ID:         approvalIDs["command-1"],
+		ToolCallID: "command-1",
+		Approved:   false,
+		Reason:     "not now",
+	})
+	select {
+	case result := <-results:
+		if result.err != nil || result.toolCallID != "command-1" || result.decision.Approved || result.decision.Reason != "not now" {
+			t.Fatalf("second resumed approval = %#v", result)
+		}
+	case <-ctx.Done():
+		t.Fatalf("denied command did not resume: %v", ctx.Err())
+	}
+
+	hub.Complete("run-1")
+	started := make([]ToolApprovalStarted, 0, 1)
+	for event := range events {
+		if event.Type != "tool_approval_started" {
+			continue
+		}
+		value, startedOK := event.Data.(ToolApprovalStarted)
+		if !startedOK {
+			t.Fatalf("tool approval started data = %T", event.Data)
+		}
+		started = append(started, value)
+	}
+	if len(started) != 1 || started[0].ToolCallID != "command-2" {
+		t.Fatalf("tool approval started events = %#v", started)
+	}
+}
+
+func TestToolApprovalLimitCancelsActiveRunAndWakesWaiters(t *testing.T) {
+	hub := NewHub()
+	hub.Create("run-1")
+	runContext, cancelWithCause := context.WithCancelCause(t.Context())
+	defer cancelWithCause(nil)
+	active := &activeRun{
+		runID:            "run-1",
+		cancel:           func() { cancelWithCause(nil) },
+		cancelWithCause:  cancelWithCause,
+		pendingApprovals: make(map[string]*pendingToolApproval),
+	}
+	engine := &Engine{
+		hub:    hub,
+		active: map[string]*activeRun{"session-1": active},
+	}
+	events, ok := hub.Subscribe(t.Context(), "run-1", 0)
+	if !ok {
+		t.Fatal("Subscribe() ok = false")
+	}
+	results := make(chan error, maxPendingToolApprovals)
+	for index := range maxPendingToolApprovals {
+		go func() {
+			_, err := engine.requestWorkspaceToolApproval(
+				runContext,
+				"session-1",
+				"run-1",
+				workspacetools.ToolApprovalRequest{
+					ToolCallID: fmt.Sprintf("command-%d", index),
+					ToolName:   "run_command",
+				},
+			)
+			results <- err
+		}()
+	}
+	for requested := 0; requested < maxPendingToolApprovals; {
+		select {
+		case event := <-events:
+			if event.Type == "tool_approval" {
+				requested++
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out after %d pending approval requests", requested)
+		}
+	}
+
+	err := engine.registerToolApproval("session-1", "run-1", ToolApprovalRequest{
+		ID:         "approval-over-limit",
+		ToolCallID: "command-over-limit",
+		ToolName:   "run_command",
+	})
+	if !errors.Is(err, errTooManyPendingToolApprovals) {
+		t.Fatalf("registerToolApproval() error = %v, want limit error", err)
+	}
+	select {
+	case <-runContext.Done():
+	case <-time.After(time.Second):
+		t.Fatal("approval admission failure did not cancel the active run")
+	}
+	if !errors.Is(context.Cause(runContext), errTooManyPendingToolApprovals) {
+		t.Fatalf("cancellation cause = %v, want limit error", context.Cause(runContext))
+	}
+	for range maxPendingToolApprovals {
+		select {
+		case waiterErr := <-results:
+			if !errors.Is(waiterErr, errTooManyPendingToolApprovals) {
+				t.Fatalf("pending approval error = %v, want limit error", waiterErr)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("pending approval did not wake after overflow cancellation")
+		}
+	}
+	engine.mu.Lock()
+	pendingCount := len(active.pendingApprovals)
+	engine.mu.Unlock()
+	if pendingCount != 0 {
+		t.Fatalf("pending approval count = %d, want 0", pendingCount)
+	}
+	if engine.WaitingForUser("session-1") {
+		t.Fatal("overflowed run still reports that it is waiting for approval")
+	}
+}
+
+func TestToolApprovalLimitCountsOnlyUnresolvedRequests(t *testing.T) {
+	cancelled := false
+	active := &activeRun{
+		runID: "run-1",
+		cancelWithCause: func(error) {
+			cancelled = true
+		},
+		pendingApprovals: make(map[string]*pendingToolApproval),
+	}
+	for index := range maxPendingToolApprovals {
+		approval := &pendingToolApproval{
+			request:  ToolApprovalRequest{ID: fmt.Sprintf("approval-%d", index)},
+			resolved: make(chan struct{}),
+		}
+		if index == 0 {
+			approval.resolutionOrder = 1
+		}
+		active.pendingApprovals[approval.request.ID] = approval
+	}
+	engine := &Engine{
+		hub:    NewHub(),
+		active: map[string]*activeRun{"session-1": active},
+	}
+
+	pending, err := engine.registerPendingToolApproval("session-1", "run-1", ToolApprovalRequest{
+		ID: "approval-at-limit",
+	})
+	if err != nil {
+		t.Fatalf("registerPendingToolApproval() error = %v", err)
+	}
+	if pending == nil || cancelled {
+		t.Fatalf("registration = %#v, cancelled = %v", pending, cancelled)
+	}
+	_, err = engine.registerPendingToolApproval("session-1", "run-1", ToolApprovalRequest{
+		ID: "approval-over-limit",
+	})
+	if !errors.Is(err, errTooManyPendingToolApprovals) || !cancelled {
+		t.Fatalf("overflow error = %v, cancelled = %v", err, cancelled)
+	}
+}
+
+func TestFinalRunOutcomeUsesCancellationCause(t *testing.T) {
+	overflowContext, cancelWithCause := context.WithCancelCause(t.Context())
+	cancelWithCause(errTooManyPendingToolApprovals)
+	status, message := finalRunOutcome(overflowContext, "completed", "")
+	if status != "failed" || message != errTooManyPendingToolApprovals.Error() {
+		t.Fatalf("overflow outcome = (%q, %q)", status, message)
+	}
+
+	cancelledContext, cancel := context.WithCancel(t.Context())
+	cancel()
+	status, message = finalRunOutcome(cancelledContext, "completed", "ignored")
+	if status != "cancelled" || message != "ignored" {
+		t.Fatalf("ordinary cancellation outcome = (%q, %q)", status, message)
+	}
+}
+
+func TestRequestWorkspaceToolApprovalRemovesPendingRequestOnCancellation(t *testing.T) {
+	hub := NewHub()
+	hub.Create("run-1")
+	active := &activeRun{
+		runID:             "run-1",
+		pendingApprovals:  make(map[string]*pendingToolApproval),
+		pendingUserInputs: make(map[string]*pendingUserInput),
+	}
+	engine := &Engine{
+		hub:    hub,
+		active: map[string]*activeRun{"session-1": active},
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	events, ok := hub.Subscribe(t.Context(), "run-1", 0)
+	if !ok {
+		t.Fatal("Subscribe() ok = false")
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := engine.requestWorkspaceToolApproval(
+			ctx,
+			"session-1",
+			"run-1",
+			workspacetools.ToolApprovalRequest{
+				ToolCallID: "command-1",
+				ToolName:   "run_command",
+			},
+		)
+		result <- err
+	}()
+
+	select {
+	case event := <-events:
+		if event.Type != "tool_approval" {
+			t.Fatalf("first event type = %q, want tool_approval", event.Type)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for tool approval")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("requestWorkspaceToolApproval() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled approval request did not return")
+	}
+
+	engine.mu.Lock()
+	pendingCount := len(active.pendingApprovals)
+	engine.mu.Unlock()
+	if pendingCount != 0 {
+		t.Fatalf("pending approval count = %d, want 0", pendingCount)
+	}
+	if engine.WaitingForUser("session-1") {
+		t.Fatal("WaitingForUser() = true after canceled approval")
 	}
 }
 

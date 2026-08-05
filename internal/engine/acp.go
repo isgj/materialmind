@@ -95,9 +95,7 @@ func (e *Engine) executeACP(
 			finalStatus = "failed"
 			finalError = fmt.Sprintf("ACP run panicked: %v", recovered)
 		}
-		if ctx.Err() != nil && finalStatus == "completed" {
-			finalStatus = "cancelled"
-		}
+		finalStatus, finalError = finalRunOutcome(ctx, finalStatus, finalError)
 		updated, err := e.store.UpdateRun(
 			context.Background(),
 			runRecord.ID,

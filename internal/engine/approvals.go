@@ -10,16 +10,21 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool/toolconfirmation"
 	"google.golang.org/genai"
 
 	"materialmind/internal/store"
+	"materialmind/internal/workspacetools"
 )
 
 const maxPendingToolApprovals = 32
 
-var ErrToolApprovalNotPending = errors.New("tool approval is not pending")
+var (
+	ErrToolApprovalNotPending      = errors.New("tool approval is not pending")
+	errTooManyPendingToolApprovals = errors.New("too many pending tool approvals")
+)
 
 type ToolApprovalRequest struct {
 	ID           string               `json:"id"`
@@ -79,6 +84,11 @@ func (e *Engine) ResolveToolApproval(
 		e.mu.Unlock()
 		return ToolApprovalResolution{}, ErrToolApprovalNotPending
 	}
+	if active.approvalFailure != nil {
+		err := active.approvalFailure
+		e.mu.Unlock()
+		return ToolApprovalResolution{}, err
+	}
 	pending, ok := active.pendingApprovals[approvalID]
 	if !ok {
 		e.mu.Unlock()
@@ -119,36 +129,119 @@ func (e *Engine) ResolveToolApproval(
 	active.nextApprovalResolution++
 	pending.resolution = resolution
 	pending.resolutionOrder = active.nextApprovalResolution
+	// Publish the resolution before unblocking the tool so an approved call cannot
+	// publish its execution-start event first.
+	e.hub.Publish(runID, "tool_approval_resolved", resolution)
 	close(pending.resolved)
 	e.mu.Unlock()
-
-	e.hub.Publish(runID, "tool_approval_resolved", resolution)
 	return resolution, nil
 }
 
+func (e *Engine) requestWorkspaceToolApproval(
+	ctx context.Context,
+	sessionID string,
+	runID string,
+	request workspacetools.ToolApprovalRequest,
+) (workspacetools.ToolApprovalDecision, error) {
+	approval := ToolApprovalRequest{
+		ID:         uuid.NewString(),
+		ToolCallID: request.ToolCallID,
+		ToolName:   request.ToolName,
+		Input:      maps.Clone(request.Input),
+		Payload:    maps.Clone(request.Payload),
+		Hint:       request.Hint,
+	}
+	if approval.Input == nil {
+		approval.Input = map[string]any{}
+	}
+	if approval.Payload == nil {
+		approval.Payload = map[string]any{}
+	}
+	pending, err := e.registerPendingToolApproval(sessionID, runID, approval)
+	if err != nil {
+		return workspacetools.ToolApprovalDecision{}, err
+	}
+	defer e.removePendingToolApproval(sessionID, runID, approval.ID, pending)
+	decision, err := e.waitForNextToolApproval(ctx, sessionID, runID, map[string]ToolApprovalRequest{
+		approval.ID: approval,
+	})
+	if err != nil {
+		return workspacetools.ToolApprovalDecision{}, err
+	}
+	e.publishToolApprovalStarted(runID, decision)
+	return workspacetools.ToolApprovalDecision{
+		Approved: decision.Approved,
+		Reason:   decision.Reason,
+	}, nil
+}
+
 func (e *Engine) registerToolApproval(sessionID, runID string, request ToolApprovalRequest) error {
+	_, err := e.registerPendingToolApproval(sessionID, runID, request)
+	return err
+}
+
+func (e *Engine) registerPendingToolApproval(
+	sessionID, runID string,
+	request ToolApprovalRequest,
+) (*pendingToolApproval, error) {
 	e.mu.Lock()
 	active, ok := e.active[sessionID]
 	if !ok || active.runID != runID {
 		e.mu.Unlock()
-		return ErrToolApprovalNotPending
+		return nil, ErrToolApprovalNotPending
 	}
-	if _, exists := active.pendingApprovals[request.ID]; exists {
+	if active.approvalFailure != nil {
+		err := active.approvalFailure
 		e.mu.Unlock()
-		return nil
+		return nil, err
 	}
-	if len(active.pendingApprovals) >= maxPendingToolApprovals {
+	if pending, exists := active.pendingApprovals[request.ID]; exists {
 		e.mu.Unlock()
-		return fmt.Errorf("too many pending tool approvals")
+		return pending, nil
 	}
-	active.pendingApprovals[request.ID] = &pendingToolApproval{
+	if unresolvedToolApprovalCount(active.pendingApprovals) >= maxPendingToolApprovals {
+		active.approvalFailure = errTooManyPendingToolApprovals
+		if active.cancelWithCause != nil {
+			active.cancelWithCause(errTooManyPendingToolApprovals)
+		} else if active.cancel != nil {
+			active.cancel()
+		}
+		e.mu.Unlock()
+		return nil, errTooManyPendingToolApprovals
+	}
+	pending := &pendingToolApproval{
 		request:  request,
 		resolved: make(chan struct{}),
 	}
-	e.mu.Unlock()
-
+	active.pendingApprovals[request.ID] = pending
+	// Publish before releasing the admission lock so an overflow cannot cancel
+	// the run before an already-admitted request becomes visible.
 	e.hub.Publish(runID, "tool_approval", request)
-	return nil
+	e.mu.Unlock()
+	return pending, nil
+}
+
+func unresolvedToolApprovalCount(approvals map[string]*pendingToolApproval) int {
+	count := 0
+	for _, approval := range approvals {
+		if approval.resolutionOrder == 0 {
+			count++
+		}
+	}
+	return count
+}
+
+func (e *Engine) removePendingToolApproval(
+	sessionID, runID, approvalID string,
+	pending *pendingToolApproval,
+) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	active, ok := e.active[sessionID]
+	if !ok || active.runID != runID || active.pendingApprovals[approvalID] != pending {
+		return
+	}
+	delete(active.pendingApprovals, approvalID)
 }
 
 func (e *Engine) waitForToolApprovals(ctx context.Context, sessionID, runID string, requests []ToolApprovalRequest) ([]ToolApprovalResolution, error) {
@@ -185,14 +278,20 @@ func (e *Engine) waitForNextToolApproval(
 		return ToolApprovalResolution{}, ErrToolApprovalNotPending
 	}
 	for {
-		if err := ctx.Err(); err != nil {
-			return ToolApprovalResolution{}, err
-		}
 		e.mu.Lock()
 		active, ok := e.active[sessionID]
 		if !ok || active.runID != runID {
 			e.mu.Unlock()
 			return ToolApprovalResolution{}, ErrToolApprovalNotPending
+		}
+		if active.approvalFailure != nil {
+			err := active.approvalFailure
+			e.mu.Unlock()
+			return ToolApprovalResolution{}, err
+		}
+		if err := ctx.Err(); err != nil {
+			e.mu.Unlock()
+			return ToolApprovalResolution{}, err
 		}
 
 		var next *pendingToolApproval
@@ -226,10 +325,7 @@ func (e *Engine) waitForNextToolApproval(
 		}
 		e.mu.Unlock()
 
-		selected, _, _ := reflect.Select(cases)
-		if selected == 0 {
-			return ToolApprovalResolution{}, ctx.Err()
-		}
+		reflect.Select(cases)
 	}
 }
 

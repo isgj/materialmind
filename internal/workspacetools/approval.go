@@ -1,6 +1,7 @@
 package workspacetools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -22,6 +23,24 @@ type runnableFunctionTool interface {
 }
 
 type deniedResultFunc func(map[string]any, *toolconfirmation.ToolConfirmation) (map[string]any, error)
+
+type ToolApprovalRequest struct {
+	ToolCallID string
+	ToolName   string
+	Input      map[string]any
+	Payload    map[string]any
+	Hint       string
+}
+
+type ToolApprovalDecision struct {
+	Approved bool
+	Reason   string
+}
+
+type ToolApprovalHandler func(
+	context.Context,
+	ToolApprovalRequest,
+) (ToolApprovalDecision, error)
 
 type approvalAwareTool struct {
 	runnableFunctionTool
