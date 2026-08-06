@@ -61,6 +61,11 @@ type acpUsageUpdate struct {
 	Cost       *acp.Cost `json:"cost,omitempty"`
 }
 
+type acpToolStatusUpdate struct {
+	ID     string             `json:"id"`
+	Status acp.ToolCallStatus `json:"status"`
+}
+
 type acpToolState struct {
 	id            string
 	title         string
@@ -642,7 +647,6 @@ func (h *acpRunHandler) RequestPermission(
 		return acp.RequestPermissionResponse{}, err
 	}
 	decision := decisions[0]
-	h.engine.publishToolApprovalStarted(h.run.ID, decision)
 	optionID := decision.OptionID
 	if optionID == "" {
 		optionID = defaultPermissionOption(request.Options, decision.Approved)
@@ -941,6 +945,7 @@ func (h *acpRunHandler) applyToolUpdate(ctx context.Context, update acp.ToolCall
 	if update.Kind != nil {
 		tool.kind = *update.Kind
 	}
+	statusChanged := update.Status != nil && tool.status != *update.Status
 	if update.Status != nil {
 		tool.status = *update.Status
 	}
@@ -972,6 +977,7 @@ func (h *acpRunHandler) applyToolUpdate(ctx context.Context, update acp.ToolCall
 	}
 	publishResult := tool.status == acp.ToolCallStatusCompleted ||
 		tool.status == acp.ToolCallStatusFailed
+	statusUpdate := acpToolStatusUpdate{ID: id, Status: tool.status}
 	h.mu.Unlock()
 
 	_, err := h.engine.store.UpsertACPTranscriptItem(ctx, h.session.ID, store.TranscriptItem{
@@ -992,6 +998,9 @@ func (h *acpRunHandler) applyToolUpdate(ctx context.Context, update acp.ToolCall
 		h.engine.hub.Publish(h.run.ID, "tool_call", map[string]any{
 			"id": id, "name": toolName, "input": input,
 		})
+	}
+	if statusChanged {
+		h.engine.hub.Publish(h.run.ID, "tool_status", statusUpdate)
 	}
 	for stream, text := range pendingOutput {
 		h.publishCommandOutput(id, stream, text)

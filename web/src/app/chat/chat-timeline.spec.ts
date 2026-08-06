@@ -969,7 +969,7 @@ describe('chat timeline', () => {
     expect(steps[0].mcp?.total).toBeUndefined();
   });
 
-  it('distinguishes an approved queued tool from one that started executing', () => {
+  it('distinguishes queued ACP tools from ACP and backend execution starts', () => {
     const approval = {
       id: 'approval-1',
       kind: 'fetch_url' as const,
@@ -985,10 +985,21 @@ describe('chat timeline', () => {
         id: 'fetch',
         name: 'fetch_url',
         input: { url: 'https://example.com/docs' },
+        toolStatus: 'pending',
         approval,
       },
     ]);
-    const executing = buildLiveActivitySteps([
+    const acpExecuting = buildLiveActivitySteps([
+      {
+        kind: 'tool',
+        id: 'fetch',
+        name: 'fetch_url',
+        input: { url: 'https://example.com/docs' },
+        toolStatus: 'in_progress',
+        approval,
+      },
+    ]);
+    const backendExecuting = buildLiveActivitySteps([
       {
         kind: 'tool',
         id: 'fetch',
@@ -999,7 +1010,8 @@ describe('chat timeline', () => {
     ]);
 
     expect(queued[0].status).toBe('queued');
-    expect(executing[0].status).toBe('running');
+    expect(acpExecuting[0].status).toBe('running');
+    expect(backendExecuting[0].status).toBe('running');
   });
 
   it('keeps only display metadata from a completed fetch result', () => {

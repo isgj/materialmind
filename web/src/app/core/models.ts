@@ -447,6 +447,13 @@ export interface StreamToolCall extends AgentEventContext {
   input: Record<string, unknown>;
 }
 
+export type ToolCallStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+
+export interface StreamToolStatus {
+  id: string;
+  status: ToolCallStatus;
+}
+
 export interface StreamToolResult extends AgentEventContext {
   id: string;
   name: string;

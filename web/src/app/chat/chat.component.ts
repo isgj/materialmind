@@ -60,6 +60,7 @@ import {
   StreamToolApprovalStarted,
   StreamToolCall,
   StreamToolResult,
+  StreamToolStatus,
   StreamUserInputRequest,
   ToolApprovalResolution,
   TranscriptItem,
@@ -975,6 +976,19 @@ export class ChatComponent implements OnDestroy {
         return;
       }
       this.applyToolCall(call);
+    });
+    source.addEventListener('tool_status', (event) => {
+      const status = this.parseEvent<StreamToolStatus>(event);
+      if (!status) {
+        return;
+      }
+      this.liveActivity.update(
+        (items) =>
+          updateLiveToolActivity(items, status.id, (item) => ({
+            ...item,
+            toolStatus: status.status,
+          })).items,
+      );
     });
     source.addEventListener('command_output', (event) => {
       const output = this.parseEvent<StreamCommandOutput>(event);

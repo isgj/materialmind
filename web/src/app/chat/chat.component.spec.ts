@@ -20,7 +20,7 @@ import {
 } from '../core/models';
 import { REASONING_EFFORT_OPTIONS } from '../core/reasoning-effort';
 import { ChatComponent } from './chat.component';
-import { LiveActivity } from './chat-timeline';
+import { LiveActivity, buildLiveActivitySteps } from './chat-timeline';
 import { SessionNotesDialog } from './session-notes-dialog/session-notes-dialog';
 
 interface ComposerKeyboardHarness {
@@ -448,6 +448,51 @@ describe('ChatComponent composer keyboard', () => {
 
     const activity = component.liveActivity()[0];
     expect(activity.kind === 'tool' ? activity.approval?.status : null).toBe('executing');
+  });
+
+  it('keeps concurrent ACP approvals queued until each matching tool starts', async () => {
+    await fixture.whenStable();
+    vi.stubGlobal('EventSource', StubEventSource);
+    component.attachStream('run-1');
+    const source = StubEventSource.latest;
+
+    for (const id of ['command-first', 'command-second']) {
+      source?.emit('tool_call', { id, name: 'run_command', input: { command: id } });
+      source?.emit('tool_status', { id, status: 'pending' });
+      source?.emit('tool_approval', {
+        id: `approval-${id}`,
+        toolCallId: id,
+        toolName: 'run_command',
+        input: { command: id },
+        payload: { kind: 'run_command', command: id },
+      });
+    }
+    source?.emit('tool_approval_resolved', {
+      id: 'approval-command-first',
+      toolCallId: 'command-first',
+      approved: true,
+    });
+
+    expect(buildLiveActivitySteps(component.liveActivity()).map((step) => step.status)).toEqual([
+      'queued',
+      'approval_required',
+    ]);
+
+    source?.emit('tool_status', { id: 'command-first', status: 'in_progress' });
+    expect(buildLiveActivitySteps(component.liveActivity()).map((step) => step.status)).toEqual([
+      'running',
+      'approval_required',
+    ]);
+
+    source?.emit('tool_result', {
+      id: 'command-first',
+      name: 'run_command',
+      output: { state: 'completed', exitCode: 0 },
+    });
+    expect(buildLiveActivitySteps(component.liveActivity()).map((step) => step.status)).toEqual([
+      'complete',
+      'approval_required',
+    ]);
   });
 
   it('keeps the composer width stable for visually wrapped text', () => {

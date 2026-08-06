@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	acp "github.com/coder/acp-go-sdk"
 
@@ -206,7 +207,15 @@ func TestACPSessionUpdatePublishesTerminalOutputMetadata(t *testing.T) {
 	if !ok {
 		t.Fatal("Hub.Subscribe() did not find the run")
 	}
-	<-events
+	if event := <-events; event.Type != "tool_call" {
+		t.Fatalf("initial tool event = %#v", event)
+	}
+	statusEvent := <-events
+	status, ok := statusEvent.Data.(acpToolStatusUpdate)
+	if statusEvent.Type != "tool_status" || !ok ||
+		status.ID != "command-1" || status.Status != acp.ToolCallStatusInProgress {
+		t.Fatalf("tool status event = %#v", statusEvent)
+	}
 	event := <-events
 	data, ok := event.Data.(map[string]string)
 	if event.Type != "command_output" ||
@@ -215,6 +224,122 @@ func TestACPSessionUpdatePublishesTerminalOutputMetadata(t *testing.T) {
 		data["stream"] != "stdout" ||
 		data["text"] != "package output\n" {
 		t.Fatalf("metadata stream event = %#v", event)
+	}
+}
+
+func TestACPConcurrentPermissionsRemainCorrelatedAndQueued(t *testing.T) {
+	runEngine, _, handler, _ := newACPInternalNotesTest(t, toolpolicy.DefaultPermissions())
+	type permissionResult struct {
+		toolCallID string
+		optionID   acp.PermissionOptionId
+		err        error
+	}
+	results := make(chan permissionResult, 2)
+	requestPermission := func(toolCallID, optionID string) {
+		go func() {
+			response, err := handler.RequestPermission(context.Background(), acp.RequestPermissionRequest{
+				ToolCall: acp.ToolCallUpdate{
+					ToolCallId: acp.ToolCallId(toolCallID),
+					Title:      acp.Ptr("Run " + toolCallID),
+					Kind:       acp.Ptr(acp.ToolKindExecute),
+					Status:     acp.Ptr(acp.ToolCallStatusPending),
+					RawInput:   map[string]any{"command": toolCallID},
+				},
+				Options: []acp.PermissionOption{
+					{
+						OptionId: acp.PermissionOptionId(optionID),
+						Name:     "Allow once",
+						Kind:     acp.PermissionOptionKindAllowOnce,
+					},
+					{
+						OptionId: acp.PermissionOptionId("reject-" + toolCallID),
+						Name:     "Reject",
+						Kind:     acp.PermissionOptionKindRejectOnce,
+					},
+				},
+			})
+			selected := acp.PermissionOptionId("")
+			if response.Outcome.Selected != nil {
+				selected = response.Outcome.Selected.OptionId
+			}
+			results <- permissionResult{toolCallID: toolCallID, optionID: selected, err: err}
+		}()
+	}
+	requestPermission("command-first", "allow-first")
+	requestPermission("command-second", "allow-second")
+
+	approvals := make(map[string]ToolApprovalRequest, 2)
+	deadline := time.Now().Add(2 * time.Second)
+	for len(approvals) < 2 {
+		runEngine.mu.Lock()
+		for _, pending := range runEngine.active[handler.session.ID].pendingApprovals {
+			approvals[pending.request.ToolCallID] = pending.request
+		}
+		runEngine.mu.Unlock()
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for ACP approvals: %#v", approvals)
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	firstApproval := approvals["command-first"]
+	if _, err := runEngine.ResolveToolApproval(
+		t.Context(), handler.run.ID, firstApproval.ID, true, "", "allow-first",
+	); err != nil {
+		t.Fatalf("resolve first approval: %v", err)
+	}
+	select {
+	case result := <-results:
+		if result.err != nil || result.toolCallID != "command-first" || result.optionID != "allow-first" {
+			t.Fatalf("first permission response = %#v", result)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for first ACP permission response")
+	}
+	if err := handler.SessionUpdate(t.Context(), acp.SessionNotification{
+		Update: acp.UpdateToolCall(
+			"command-first",
+			acp.WithUpdateStatus(acp.ToolCallStatusInProgress),
+		),
+	}); err != nil {
+		t.Fatalf("publish first execution status: %v", err)
+	}
+
+	secondApproval := approvals["command-second"]
+	runEngine.mu.Lock()
+	secondPending := runEngine.active[handler.session.ID].pendingApprovals[secondApproval.ID]
+	secondUnresolved := secondPending != nil && secondPending.resolutionOrder == 0
+	runEngine.mu.Unlock()
+	if !secondUnresolved {
+		t.Fatal("resolving the first ACP approval also resolved the second")
+	}
+
+	statuses := make(map[string]acp.ToolCallStatus)
+	for _, event := range engineHubEvents(t, runEngine, handler.run.ID) {
+		if event.Type == "tool_approval_started" {
+			t.Fatalf("ACP permission release published an execution-start event: %#v", event)
+		}
+		if status, ok := event.Data.(acpToolStatusUpdate); event.Type == "tool_status" && ok {
+			statuses[status.ID] = status.Status
+		}
+	}
+	if statuses["command-first"] != acp.ToolCallStatusInProgress ||
+		statuses["command-second"] != acp.ToolCallStatusPending {
+		t.Fatalf("ACP tool statuses = %#v", statuses)
+	}
+
+	if _, err := runEngine.ResolveToolApproval(
+		t.Context(), handler.run.ID, secondApproval.ID, true, "", "allow-second",
+	); err != nil {
+		t.Fatalf("resolve second approval: %v", err)
+	}
+	select {
+	case result := <-results:
+		if result.err != nil || result.toolCallID != "command-second" || result.optionID != "allow-second" {
+			t.Fatalf("second permission response = %#v", result)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for second ACP permission response")
 	}
 }
 

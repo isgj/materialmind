@@ -13,6 +13,7 @@ import {
   StreamMCPElicitationRequest,
   StreamToolApproval,
   StreamUserInputRequest,
+  ToolCallStatus,
   TranscriptItem,
   UserInputAnswer,
   UserQuestion,
@@ -155,6 +156,7 @@ export interface LiveToolActivity {
   id: string;
   name: string;
   input: Record<string, unknown>;
+  toolStatus?: ToolCallStatus;
   output?: Record<string, unknown>;
   approval?: LiveToolApproval;
   userInput?: UserInputState;
@@ -290,7 +292,13 @@ export function buildLiveActivitySteps(items: readonly LiveActivity[]): AgentAct
     const approvalPending =
       item.approval?.status === 'pending' || item.approval?.status === 'submitting';
     const executionStarted =
-      item.approval?.status === 'executing' || item.commandOutput !== undefined;
+      item.toolStatus === 'in_progress' ||
+      item.approval?.status === 'executing' ||
+      item.commandOutput !== undefined;
+    const terminalToolStatus: ActivityStatus | null =
+      item.toolStatus === 'completed' ? 'complete' : item.toolStatus === 'failed' ? 'failed' : null;
+    const executionQueued =
+      !executionStarted && (item.toolStatus === 'pending' || item.approval?.status === 'approved');
     const status: ActivityStatus =
       userInputPending || elicitationPending
         ? 'input_required'
@@ -300,9 +308,7 @@ export function buildLiveActivitySteps(items: readonly LiveActivity[]): AgentAct
             ? 'denied'
             : item.output
               ? toolResultStatus(item.output)
-              : item.approval?.status === 'approved' && !executionStarted
-                ? 'queued'
-                : 'running';
+              : (terminalToolStatus ?? (executionQueued ? 'queued' : 'running'));
     return toolStep(item, status);
   });
 }
