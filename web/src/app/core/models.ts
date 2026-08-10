@@ -422,7 +422,7 @@ export interface StreamMessage extends AgentEventContext {
   text: string;
 }
 
-export interface StreamThought {
+export interface StreamThought extends AgentEventContext {
   id: string;
   text: string;
 }

@@ -111,14 +111,19 @@ func (m *OpenAIResponses) GenerateContent(
 		for responseStream.Next() {
 			event := responseStream.Current()
 			switch event.Type {
+			case "response.reasoning_summary_text.delta":
+				delta := event.AsResponseReasoningSummaryTextDelta().Delta
+				if delta != "" && !yield(openAIResponsesPartial(delta, modelName, true), nil) {
+					return
+				}
 			case "response.output_text.delta":
 				delta := event.AsResponseOutputTextDelta().Delta
-				if delta != "" && !yield(openAIResponsesPartial(delta, modelName), nil) {
+				if delta != "" && !yield(openAIResponsesPartial(delta, modelName, false), nil) {
 					return
 				}
 			case "response.refusal.delta":
 				delta := event.AsResponseRefusalDelta().Delta
-				if delta != "" && !yield(openAIResponsesPartial(delta, modelName), nil) {
+				if delta != "" && !yield(openAIResponsesPartial(delta, modelName, false), nil) {
 					return
 				}
 			case "response.completed":
@@ -171,9 +176,11 @@ func openAIResponsesContextScope(prefix, modelName string) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func openAIResponsesPartial(text, modelName string) *model.LLMResponse {
+func openAIResponsesPartial(text, modelName string, thought bool) *model.LLMResponse {
+	part := genai.NewPartFromText(text)
+	part.Thought = thought
 	return &model.LLMResponse{
-		Content:      genai.NewContentFromText(text, genai.RoleModel),
+		Content:      genai.NewContentFromParts([]*genai.Part{part}, genai.RoleModel),
 		ModelVersion: modelName,
 		Partial:      true,
 	}
@@ -204,6 +211,9 @@ func toOpenAIResponsesRequest(
 		return openairesponses.ResponseNewParams{}, err
 	}
 	params.Reasoning.Effort = reasoningEffort
+	if reasoningEffort != "" {
+		params.Reasoning.Summary = shared.ReasoningSummaryAuto
+	}
 
 	if req.Config != nil {
 		if req.Config.MaxOutputTokens > 0 {
@@ -402,6 +412,20 @@ func fromOpenAIResponsesResponse(
 	refused := false
 	for _, item := range response.Output {
 		switch item.Type {
+		case "reasoning":
+			reasoning := item.AsReasoning()
+			summary := make([]string, 0, len(reasoning.Summary))
+			for _, part := range reasoning.Summary {
+				if text := strings.TrimSpace(part.Text); text != "" {
+					summary = append(summary, text)
+				}
+			}
+			if len(summary) > 0 {
+				parts = append(parts, &genai.Part{
+					Text:    strings.Join(summary, "\n\n"),
+					Thought: true,
+				})
+			}
 		case "message":
 			message := item.AsMessage()
 			for _, content := range message.Content {

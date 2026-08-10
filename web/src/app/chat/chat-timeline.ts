@@ -169,6 +169,7 @@ export interface LiveNoteActivity {
   kind: 'note';
   id: string;
   text: string;
+  active?: boolean;
 }
 
 export interface LiveSubagentActivity {
@@ -196,6 +197,7 @@ export type AgentDetailTimelineItem =
       kind: 'note';
       id: string;
       text: string;
+      active?: boolean;
     }
   | {
       kind: 'activity';
@@ -425,6 +427,7 @@ export type LiveChatTimelineItem =
       kind: 'note';
       id: string;
       text: string;
+      active: boolean;
     }
   | {
       kind: 'activity';
@@ -486,7 +489,7 @@ export function buildLiveChatTimeline(items: readonly LiveActivity[]): LiveChatT
     }
     if (item.kind === 'note') {
       flushTools();
-      timeline.push({ kind: 'note', id: item.id, text: item.text });
+      timeline.push({ kind: 'note', id: item.id, text: item.text, active: item.active ?? false });
       continue;
     }
     tools.push(item);

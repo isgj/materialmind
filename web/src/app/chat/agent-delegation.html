@@ -47,7 +47,7 @@
             </article>
           }
           @case ('note') {
-            <app-agent-note [text]="entry.text" />
+            <app-agent-note [text]="entry.text" [active]="entry.active ?? false" />
           }
           @case ('activity') {
             <app-agent-activity

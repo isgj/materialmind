@@ -201,7 +201,7 @@ func TestToOpenAIResponsesRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal() error = %v", err)
 	}
-	for _, expected := range []string{"read_file", "tool-1", "Inspect the project", "Be precise", `"type":"function_call_output"`, `"strict":false`, `"reasoning":{"effort":"ultra"`, "reasoning.encrypted_content"} {
+	for _, expected := range []string{"read_file", "tool-1", "Inspect the project", "Be precise", `"type":"function_call_output"`, `"strict":false`, `"reasoning":{"effort":"ultra","summary":"auto"`, "reasoning.encrypted_content"} {
 		if !strings.Contains(string(encoded), expected) {
 			t.Fatalf("request JSON does not contain %q: %s", expected, encoded)
 		}
@@ -252,7 +252,7 @@ func TestOpenAIResponsesPreservesOutputItemsForTheNextTurn(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{
 		"id":"resp-1","object":"response","created_at":1,"status":"completed","model":"responses-test",
 		"output":[
-			{"id":"rs-1","type":"reasoning","status":"completed","summary":[],"encrypted_content":"encrypted-reasoning"},
+			{"id":"rs-1","type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":"Inspecting the project."}],"encrypted_content":"encrypted-reasoning"},
 			{"id":"msg-1","type":"message","role":"assistant","status":"completed","phase":"commentary","content":[{"type":"output_text","text":"Checking.","annotations":[]}]},
 			{"id":"fc-1","type":"function_call","status":"completed","call_id":"call-1","name":"read_file","arguments":"{\"path\":\"go.mod\"}"}
 		],
@@ -264,10 +264,13 @@ func TestOpenAIResponsesPreservesOutputItemsForTheNextTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fromOpenAIResponsesResponse() error = %v", err)
 	}
-	if len(converted.Content.Parts) != 3 || !converted.Content.Parts[0].Thought || len(converted.Content.Parts[0].ThoughtSignature) == 0 {
+	if len(converted.Content.Parts) != 4 || !converted.Content.Parts[0].Thought || len(converted.Content.Parts[0].ThoughtSignature) == 0 {
 		t.Fatalf("response parts = %#v", converted.Content.Parts)
 	}
-	call := converted.Content.Parts[2].FunctionCall
+	if thought := converted.Content.Parts[1]; !thought.Thought || thought.Text != "Inspecting the project." {
+		t.Fatalf("reasoning summary part = %#v", thought)
+	}
+	call := converted.Content.Parts[3].FunctionCall
 	if call == nil || call.ID != "call-1" || call.Name != "read_file" || call.Args["path"] != "go.mod" {
 		t.Fatalf("function call = %#v", call)
 	}
@@ -336,12 +339,14 @@ func TestOpenAIResponsesPreservesMalformedFunctionArguments(t *testing.T) {
 	}
 }
 
-func TestOpenAIResponsesStreamsText(t *testing.T) {
+func TestOpenAIResponsesStreamsTextAndReasoningSummary(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"sequence_number\":1,\"item_id\":\"msg-1\",\"output_index\":0,\"content_index\":0,\"delta\":\"Hel\"}\n\n")
-		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"sequence_number\":2,\"item_id\":\"msg-1\",\"output_index\":0,\"content_index\":0,\"delta\":\"lo\"}\n\n")
-		fmt.Fprintf(w, "data: {\"type\":\"response.completed\",\"sequence_number\":3,\"response\":%s}\n\n", openAIResponsesJSON("Hello"))
+		fmt.Fprint(w, "data: {\"type\":\"response.reasoning_summary_text.delta\",\"sequence_number\":1,\"item_id\":\"rs-1\",\"output_index\":0,\"summary_index\":0,\"delta\":\"Inspect\"}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.reasoning_summary_text.delta\",\"sequence_number\":2,\"item_id\":\"rs-1\",\"output_index\":0,\"summary_index\":0,\"delta\":\"ing\"}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"sequence_number\":3,\"item_id\":\"msg-1\",\"output_index\":1,\"content_index\":0,\"delta\":\"Hel\"}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"sequence_number\":4,\"item_id\":\"msg-1\",\"output_index\":1,\"content_index\":0,\"delta\":\"lo\"}\n\n")
+		fmt.Fprintf(w, "data: {\"type\":\"response.completed\",\"sequence_number\":5,\"response\":%s}\n\n", openAIResponsesJSONWithSummary("Hello", "Inspecting"))
 	}))
 	defer server.Close()
 
@@ -349,7 +354,8 @@ func TestOpenAIResponsesStreamsText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewOpenAIResponses() error = %v", err)
 	}
-	var partials []string
+	var textPartials []string
+	var thoughtPartials []string
 	var final *model.LLMResponse
 	for response, generateErr := range adapter.GenerateContent(context.Background(), &model.LLMRequest{
 		Contents: []*genai.Content{genai.NewContentFromText("Hi", genai.RoleUser)},
@@ -358,15 +364,25 @@ func TestOpenAIResponsesStreamsText(t *testing.T) {
 			t.Fatalf("GenerateContent() error = %v", generateErr)
 		}
 		if response.Partial {
-			partials = append(partials, response.Content.Parts[0].Text)
+			part := response.Content.Parts[0]
+			if part.Thought {
+				thoughtPartials = append(thoughtPartials, part.Text)
+			} else {
+				textPartials = append(textPartials, part.Text)
+			}
 		} else {
 			final = response
 		}
 	}
-	if strings.Join(partials, "") != "Hello" {
-		t.Fatalf("partial text = %q", strings.Join(partials, ""))
+	if strings.Join(thoughtPartials, "") != "Inspecting" {
+		t.Fatalf("partial reasoning summary = %q", strings.Join(thoughtPartials, ""))
 	}
-	if final == nil || responseText(final.Content) != "Hello" || !final.TurnComplete {
+	if strings.Join(textPartials, "") != "Hello" {
+		t.Fatalf("partial text = %q", strings.Join(textPartials, ""))
+	}
+	if final == nil || responseText(final.Content) != "Hello" ||
+		len(final.Content.Parts) != 3 || !final.Content.Parts[1].Thought ||
+		final.Content.Parts[1].Text != "Inspecting" || !final.TurnComplete {
 		t.Fatalf("final response = %#v", final)
 	}
 }
@@ -376,10 +392,16 @@ func openAIResponsesJSON(text string) string {
 	return fmt.Sprintf(`{"id":"resp-1","object":"response","created_at":1,"status":"completed","model":"responses-test","output":[{"id":"msg-1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":%s,"annotations":[]}]}],"usage":{"input_tokens":2,"input_tokens_details":{"cached_tokens":0},"output_tokens":1,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":3}}`, encodedText)
 }
 
+func openAIResponsesJSONWithSummary(text, summary string) string {
+	encodedText, _ := json.Marshal(text)
+	encodedSummary, _ := json.Marshal(summary)
+	return fmt.Sprintf(`{"id":"resp-1","object":"response","created_at":1,"status":"completed","model":"responses-test","output":[{"id":"rs-1","type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":%s}]},{"id":"msg-1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":%s,"annotations":[]}]}],"usage":{"input_tokens":2,"input_tokens_details":{"cached_tokens":0},"output_tokens":3,"output_tokens_details":{"reasoning_tokens":2},"total_tokens":5}}`, encodedSummary, encodedText)
+}
+
 func responseText(content *genai.Content) string {
 	var result strings.Builder
 	for _, part := range contentParts(content) {
-		if part != nil && part.Text != "" {
+		if part != nil && part.Text != "" && !part.Thought {
 			result.WriteString(part.Text)
 		}
 	}

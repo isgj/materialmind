@@ -101,7 +101,7 @@
       @for (entry of liveTimeline(); track entry.id) {
         @switch (entry.kind) {
           @case ('note') {
-            <app-agent-note [text]="entry.text" />
+            <app-agent-note [text]="entry.text" [active]="entry.active" />
           }
           @case ('activity') {
             <app-agent-activity

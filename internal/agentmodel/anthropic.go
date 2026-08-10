@@ -19,6 +19,19 @@ import (
 
 var _ model.LLM = (*Anthropic)(nil)
 
+const anthropicThinkingContextPrefix = "materialmind.anthropic.v1:"
+
+const (
+	anthropicThinkingBlockType         = "thinking"
+	anthropicRedactedThinkingBlockType = "redacted_thinking"
+)
+
+type anthropicThinkingContext struct {
+	Type      string `json:"type"`
+	Signature string `json:"signature,omitempty"`
+	Data      string `json:"data,omitempty"`
+}
+
 // Anthropic adapts Anthropic's Messages API, including compatible base URLs,
 // to the model interface consumed by ADK.
 type Anthropic struct {
@@ -146,12 +159,22 @@ func (m *Anthropic) GenerateContent(ctx context.Context, req *model.LLMRequest, 
 				yield(nil, fmt.Errorf("accumulate anthropic stream: %w", err))
 				return
 			}
-			if event.Type == "content_block_delta" && event.Delta.Type == "text_delta" && event.Delta.Text != "" {
-				if !yield(&model.LLMResponse{
-					Content:      genai.NewContentFromText(event.Delta.Text, genai.RoleModel),
-					ModelVersion: string(accumulated.Model),
-					Partial:      true,
-				}, nil) {
+			if event.Type != "content_block_delta" {
+				continue
+			}
+			switch event.Delta.Type {
+			case "thinking_delta":
+				if event.Delta.Thinking != "" && !yield(
+					anthropicPartial(event.Delta.Thinking, string(accumulated.Model), true),
+					nil,
+				) {
+					return
+				}
+			case "text_delta":
+				if event.Delta.Text != "" && !yield(
+					anthropicPartial(event.Delta.Text, string(accumulated.Model), false),
+					nil,
+				) {
 					return
 				}
 			}
@@ -161,6 +184,16 @@ func (m *Anthropic) GenerateContent(ctx context.Context, req *model.LLMRequest, 
 			return
 		}
 		yield(fromAnthropicMessage(&accumulated, false, true), nil)
+	}
+}
+
+func anthropicPartial(text, modelName string, thought bool) *model.LLMResponse {
+	part := genai.NewPartFromText(text)
+	part.Thought = thought
+	return &model.LLMResponse{
+		Content:      genai.NewContentFromParts([]*genai.Part{part}, genai.RoleModel),
+		ModelVersion: modelName,
+		Partial:      true,
 	}
 }
 
@@ -188,6 +221,13 @@ func toAnthropicRequest(
 		return anthropic.MessageNewParams{}, err
 	}
 	params.OutputConfig.Effort = reasoningEffort
+	if reasoningEffort != "" {
+		params.Thinking = anthropic.ThinkingConfigParamUnion{
+			OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{
+				Display: anthropic.ThinkingConfigAdaptiveDisplaySummarized,
+			},
+		}
+	}
 	if req.Config != nil {
 		if req.Config.MaxOutputTokens > 0 {
 			params.MaxTokens = int64(req.Config.MaxOutputTokens)
@@ -275,11 +315,66 @@ func toAnthropicBlocks(parts []*genai.Part) ([]anthropic.ContentBlockParamUnion,
 				return nil, err
 			}
 			blocks = append(blocks, attachmentBlocks...)
+		case part.Thought:
+			block, preserved, err := toAnthropicThinkingBlock(part)
+			if err != nil {
+				return nil, err
+			}
+			if preserved {
+				blocks = append(blocks, block)
+			}
 		case part.Text != "":
 			blocks = append(blocks, anthropic.NewTextBlock(part.Text))
 		}
 	}
 	return blocks, nil
+}
+
+func toAnthropicThinkingBlock(
+	part *genai.Part,
+) (anthropic.ContentBlockParamUnion, bool, error) {
+	if part == nil || len(part.ThoughtSignature) == 0 {
+		return anthropic.ContentBlockParamUnion{}, false, nil
+	}
+	signature := string(part.ThoughtSignature)
+	if !strings.HasPrefix(signature, anthropicThinkingContextPrefix) {
+		return anthropic.ContentBlockParamUnion{}, false, nil
+	}
+	var context anthropicThinkingContext
+	if err := json.Unmarshal(
+		[]byte(strings.TrimPrefix(signature, anthropicThinkingContextPrefix)),
+		&context,
+	); err != nil {
+		return anthropic.ContentBlockParamUnion{}, false, fmt.Errorf(
+			"decode preserved anthropic thinking context: %w",
+			err,
+		)
+	}
+	switch context.Type {
+	case anthropicThinkingBlockType:
+		if context.Signature == "" {
+			return anthropic.ContentBlockParamUnion{}, false, nil
+		}
+		return anthropic.NewThinkingBlock(context.Signature, part.Text), true, nil
+	case anthropicRedactedThinkingBlockType:
+		if context.Data == "" {
+			return anthropic.ContentBlockParamUnion{}, false, nil
+		}
+		return anthropic.NewRedactedThinkingBlock(context.Data), true, nil
+	default:
+		return anthropic.ContentBlockParamUnion{}, false, fmt.Errorf(
+			"decode preserved anthropic thinking context: unsupported block type %q",
+			context.Type,
+		)
+	}
+}
+
+func encodeAnthropicThinkingContext(context anthropicThinkingContext) []byte {
+	encoded, err := json.Marshal(context)
+	if err != nil {
+		return nil
+	}
+	return append([]byte(anthropicThinkingContextPrefix), encoded...)
 }
 
 func toAnthropicAttachment(
@@ -391,6 +486,23 @@ func fromAnthropicMessage(message *anthropic.Message, partial, turnComplete bool
 	parts := make([]*genai.Part, 0, len(message.Content))
 	for _, block := range message.Content {
 		switch block.Type {
+		case anthropicThinkingBlockType:
+			parts = append(parts, &genai.Part{
+				Text:    block.Thinking,
+				Thought: true,
+				ThoughtSignature: encodeAnthropicThinkingContext(anthropicThinkingContext{
+					Type:      anthropicThinkingBlockType,
+					Signature: block.Signature,
+				}),
+			})
+		case anthropicRedactedThinkingBlockType:
+			parts = append(parts, &genai.Part{
+				Thought: true,
+				ThoughtSignature: encodeAnthropicThinkingContext(anthropicThinkingContext{
+					Type: anthropicRedactedThinkingBlockType,
+					Data: block.Data,
+				}),
+			})
 		case "text":
 			if block.Text != "" {
 				parts = append(parts, genai.NewPartFromText(block.Text))

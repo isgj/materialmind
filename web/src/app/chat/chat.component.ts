@@ -926,6 +926,7 @@ export class ChatComponent implements OnDestroy {
         if (message.delegationId) {
           this.updateSubagentMessage(message, false);
         } else {
+          this.finishRootAgentNotes();
           this.streamedText.update((text) => text + message.text);
         }
       }
@@ -936,6 +937,7 @@ export class ChatComponent implements OnDestroy {
         if (message.delegationId) {
           this.updateSubagentMessage(message, true);
         } else {
+          this.finishRootAgentNotes();
           this.streamedText.set(message.text);
         }
       }
@@ -943,13 +945,21 @@ export class ChatComponent implements OnDestroy {
     source.addEventListener('thought_delta', (event) => {
       const thought = this.parseEvent<StreamThought>(event);
       if (thought) {
-        this.updateLiveThought(thought, false);
+        if (thought.delegationId) {
+          this.updateSubagentMessage(thought, false);
+        } else {
+          this.updateLiveThought(thought, false);
+        }
       }
     });
     source.addEventListener('thought_replace', (event) => {
       const thought = this.parseEvent<StreamThought>(event);
       if (thought) {
-        this.updateLiveThought(thought, true);
+        if (thought.delegationId) {
+          this.updateSubagentMessage(thought, true);
+        } else {
+          this.updateLiveThought(thought, true);
+        }
       }
     });
     source.addEventListener('plan_update', (event) => {
@@ -1185,6 +1195,7 @@ export class ChatComponent implements OnDestroy {
     });
     source.addEventListener('run_error', (event) => {
       const data = this.parseEvent<{ message: string }>(event);
+      this.finishRootAgentNotes();
       this.failRunningSubagents();
       if (data?.message) {
         this.snackBar.open(data.message, 'Dismiss', { duration: 8000 });
@@ -1266,20 +1277,45 @@ export class ChatComponent implements OnDestroy {
   private updateLiveThought(thought: StreamThought, replace: boolean): void {
     let matched = false;
     this.liveActivity.update((items) => {
-      const updated = items.map((item) => {
-        if (item.kind !== 'note' || item.id !== thought.id) {
+      const updated = items.map((item): LiveActivity => {
+        if (item.kind !== 'note') {
           return item;
         }
+        if (item.id !== thought.id) {
+          return !replace && item.active ? { ...item, active: false } : item;
+        }
         matched = true;
-        return { ...item, text: replace ? thought.text : item.text + thought.text };
+        return {
+          ...item,
+          text: replace ? thought.text : item.text + thought.text,
+          active: !replace,
+        };
       });
       return matched
         ? updated
-        : [...updated, { kind: 'note' as const, id: thought.id, text: thought.text }];
+        : [
+            ...updated,
+            { kind: 'note' as const, id: thought.id, text: thought.text, active: !replace },
+          ];
+    });
+  }
+
+  private finishRootAgentNotes(): void {
+    this.liveActivity.update((items) => {
+      let changed = false;
+      const updated = items.map((item): LiveActivity => {
+        if (item.kind !== 'note' || !item.active) {
+          return item;
+        }
+        changed = true;
+        return { ...item, active: false };
+      });
+      return changed ? updated : items;
     });
   }
 
   private startSubagent(delegation: StreamSubagentStarted): void {
+    this.finishRootAgentNotes();
     const note = this.streamedText().trim();
     let found = false;
     this.liveActivity.update((items) => {
@@ -1335,6 +1371,9 @@ export class ChatComponent implements OnDestroy {
               ? 'failed'
               : 'complete',
           output: delegation.output,
+          activities: item.activities.map((activity): LiveActivity =>
+            activity.kind === 'note' && activity.active ? { ...activity, active: false } : activity,
+          ),
         };
       }),
     );
@@ -1368,7 +1407,11 @@ export class ChatComponent implements OnDestroy {
           const activeNoteId = `subagent-note:${item.id}:active`;
           const activities = item.activities.map((activity): LiveActivity =>
             activity.kind === 'note' && activity.id === activeNoteId
-              ? { ...activity, id: `subagent-note:${item.id}:before:${call.id}` }
+              ? {
+                  ...activity,
+                  id: `subagent-note:${item.id}:before:${call.id}`,
+                  active: false,
+                }
               : activity,
           );
           return { ...item, activities: [...activities, tool] };
@@ -1391,6 +1434,7 @@ export class ChatComponent implements OnDestroy {
       return;
     }
 
+    this.finishRootAgentNotes();
     const note = this.streamedText().trim();
     const additions: LiveActivity[] = [];
     if (note) {
@@ -1419,19 +1463,22 @@ export class ChatComponent implements OnDestroy {
         let noteFound = false;
         const activities = item.activities.map((activity): LiveActivity => {
           if (activity.kind !== 'note' || activity.id !== noteId) {
-            return activity;
+            return activity.kind === 'note' && activity.active
+              ? { ...activity, active: false }
+              : activity;
           }
           noteFound = true;
           return {
             ...activity,
             text: replace ? message.text : activity.text + message.text,
+            active: !replace,
           };
         });
         return {
           ...item,
           activities: noteFound
             ? activities
-            : [...activities, { kind: 'note', id: noteId, text: message.text }],
+            : [...activities, { kind: 'note', id: noteId, text: message.text, active: !replace }],
         };
       }),
     );
@@ -1445,7 +1492,7 @@ export class ChatComponent implements OnDestroy {
           label: message.agentLabel || formatAgentName(message.agentName),
           task: '',
           status: 'running',
-          activities: [{ kind: 'note', id: noteId, text: message.text }],
+          activities: [{ kind: 'note', id: noteId, text: message.text, active: !replace }],
         },
       ]);
     }
@@ -1453,14 +1500,23 @@ export class ChatComponent implements OnDestroy {
 
   private failRunningSubagents(): void {
     this.liveActivity.update((items) =>
-      items.map((item): LiveActivity =>
-        item.kind === 'subagent' &&
-        (item.status === 'running' ||
-          item.status === 'approval_required' ||
-          item.status === 'input_required')
-          ? { ...item, status: 'failed' }
-          : item,
-      ),
+      items.map((item): LiveActivity => {
+        if (
+          item.kind !== 'subagent' ||
+          (item.status !== 'running' &&
+            item.status !== 'approval_required' &&
+            item.status !== 'input_required')
+        ) {
+          return item;
+        }
+        return {
+          ...item,
+          status: 'failed',
+          activities: item.activities.map((activity): LiveActivity =>
+            activity.kind === 'note' && activity.active ? { ...activity, active: false } : activity,
+          ),
+        };
+      }),
     );
   }
 

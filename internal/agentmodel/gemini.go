@@ -202,6 +202,13 @@ func (m *Gemini) GenerateContent(
 	if config.MaxOutputTokens <= 0 {
 		config.MaxOutputTokens = int32(m.generationSettings.MaxOutputTokens)
 	}
+	if config.ThinkingConfig == nil {
+		config.ThinkingConfig = &genai.ThinkingConfig{}
+	} else {
+		thinkingConfig := *config.ThinkingConfig
+		config.ThinkingConfig = &thinkingConfig
+	}
+	config.ThinkingConfig.IncludeThoughts = true
 	request.Config = &config
 	return m.delegate.GenerateContent(ctx, &request, stream)
 }

@@ -171,9 +171,19 @@ func TestToAnthropicRequest(t *testing.T) {
 		Model: "claude-test",
 		Contents: []*genai.Content{
 			genai.NewContentFromText("Inspect the project", genai.RoleUser),
-			genai.NewContentFromParts([]*genai.Part{{FunctionCall: &genai.FunctionCall{
-				ID: "tool-1", Name: "read_file", Args: map[string]any{"path": "go.mod"},
-			}}}, genai.RoleModel),
+			genai.NewContentFromParts([]*genai.Part{
+				{
+					Text:    "Inspecting the project.",
+					Thought: true,
+					ThoughtSignature: encodeAnthropicThinkingContext(anthropicThinkingContext{
+						Type:      anthropicThinkingBlockType,
+						Signature: "thinking-signature",
+					}),
+				},
+				{FunctionCall: &genai.FunctionCall{
+					ID: "tool-1", Name: "read_file", Args: map[string]any{"path": "go.mod"},
+				}},
+			}, genai.RoleModel),
 			genai.NewContentFromParts([]*genai.Part{{FunctionResponse: &genai.FunctionResponse{
 				ID: "tool-1", Name: "read_file", Response: map[string]any{"content": "module test"},
 			}}}, genai.RoleUser),
@@ -211,6 +221,16 @@ func TestToAnthropicRequest(t *testing.T) {
 	}
 	if !strings.Contains(string(encoded), `"output_config":{"effort":"medium"}`) {
 		t.Fatalf("request JSON does not contain Anthropic effort: %s", encoded)
+	}
+	for _, expected := range []string{
+		`"thinking":{"display":"summarized","type":"adaptive"}`,
+		`"type":"thinking"`,
+		`"signature":"thinking-signature"`,
+		`"thinking":"Inspecting the project."`,
+	} {
+		if !strings.Contains(string(encoded), expected) {
+			t.Fatalf("request JSON does not contain %q: %s", expected, encoded)
+		}
 	}
 	for _, removed := range []string{`"temperature"`, `"top_p"`, `"top_k"`, `"stop_sequences"`} {
 		if strings.Contains(string(encoded), removed) {
@@ -253,25 +273,161 @@ func TestToAnthropicRequestIncludesAttachment(t *testing.T) {
 	}
 }
 
+func TestToAnthropicRequestLeavesThinkingDisabledWithoutReasoningEffort(t *testing.T) {
+	request, err := toAnthropicRequest(&model.LLMRequest{
+		Contents: []*genai.Content{genai.NewContentFromText("Hi", genai.RoleUser)},
+	}, "claude-test", GenerationSettings{MaxOutputTokens: 4096})
+	if err != nil {
+		t.Fatalf("toAnthropicRequest() error = %v", err)
+	}
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if strings.Contains(string(encoded), `"thinking"`) {
+		t.Fatalf("request unexpectedly enables thinking: %s", encoded)
+	}
+}
+
 func TestFromAnthropicMessage(t *testing.T) {
 	message := &anthropic.Message{
 		Model:      "claude-test",
 		StopReason: "tool_use",
 		Content: []anthropic.ContentBlockUnion{
+			{Type: anthropicThinkingBlockType, Thinking: "Inspecting.", Signature: "thinking-signature"},
+			{Type: anthropicRedactedThinkingBlockType, Data: "redacted-thinking"},
 			{Type: "text", Text: "Checking."},
 			{Type: "tool_use", ID: "tool-1", Name: "list_directory", Input: json.RawMessage(`{"path":"."}`)},
 		},
 		Usage: anthropic.Usage{InputTokens: 10, OutputTokens: 4},
 	}
 	response := fromAnthropicMessage(message, false, true)
-	if len(response.Content.Parts) != 2 {
-		t.Fatalf("parts = %d, want 2", len(response.Content.Parts))
+	if len(response.Content.Parts) != 4 {
+		t.Fatalf("parts = %d, want 4", len(response.Content.Parts))
 	}
-	if response.Content.Parts[1].FunctionCall.Name != "list_directory" {
-		t.Fatalf("function call = %#v", response.Content.Parts[1].FunctionCall)
+	if thought := response.Content.Parts[0]; !thought.Thought || thought.Text != "Inspecting." ||
+		!strings.HasPrefix(string(thought.ThoughtSignature), anthropicThinkingContextPrefix) {
+		t.Fatalf("thinking part = %#v", thought)
+	}
+	if redacted := response.Content.Parts[1]; !redacted.Thought || redacted.Text != "" ||
+		!strings.HasPrefix(string(redacted.ThoughtSignature), anthropicThinkingContextPrefix) {
+		t.Fatalf("redacted thinking part = %#v", redacted)
+	}
+	if response.Content.Parts[3].FunctionCall.Name != "list_directory" {
+		t.Fatalf("function call = %#v", response.Content.Parts[3].FunctionCall)
 	}
 	if response.UsageMetadata.TotalTokenCount != 14 || !response.TurnComplete {
 		t.Fatalf("response metadata = %#v", response)
+	}
+}
+
+func TestAnthropicStreamsThinkingSummary(t *testing.T) {
+	reasoningEffort := "high"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var requestBody struct {
+			Stream   bool `json:"stream"`
+			Thinking struct {
+				Type    string `json:"type"`
+				Display string `json:"display"`
+			} `json:"thinking"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Errorf("decode request body: %v", err)
+		} else if !requestBody.Stream ||
+			requestBody.Thinking.Type != "adaptive" ||
+			requestBody.Thinking.Display != "summarized" {
+			t.Errorf("request body = %#v", requestBody)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, line := range []string{
+			`event: message_start`,
+			`data: {"type":"message_start","message":{"id":"msg-1","type":"message","role":"assistant","model":"claude-test","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":2,"output_tokens":0}}}`,
+			``,
+			`event: content_block_start`,
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`,
+			``,
+			`event: content_block_delta`,
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Inspecting."}}`,
+			``,
+			`event: content_block_delta`,
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"thinking-signature"}}`,
+			``,
+			`event: content_block_stop`,
+			`data: {"type":"content_block_stop","index":0}`,
+			``,
+			`event: content_block_start`,
+			`data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`,
+			``,
+			`event: content_block_delta`,
+			`data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Done."}}`,
+			``,
+			`event: content_block_stop`,
+			`data: {"type":"content_block_stop","index":1}`,
+			``,
+			`event: message_delta`,
+			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":6}}`,
+			``,
+			`event: message_stop`,
+			`data: {"type":"message_stop"}`,
+			``,
+		} {
+			fmt.Fprintln(w, line)
+		}
+	}))
+	defer server.Close()
+
+	adapter, err := NewAnthropic("claude-test", server.URL, "", GenerationSettings{
+		MaxOutputTokens: 4096,
+		ReasoningEffort: &reasoningEffort,
+	})
+	if err != nil {
+		t.Fatalf("NewAnthropic() error = %v", err)
+	}
+	var partialThought, partialText strings.Builder
+	var final *model.LLMResponse
+	for response, generateErr := range adapter.GenerateContent(
+		context.Background(),
+		&model.LLMRequest{
+			Contents: []*genai.Content{genai.NewContentFromText("Hi", genai.RoleUser)},
+		},
+		true,
+	) {
+		if generateErr != nil {
+			t.Fatalf("GenerateContent() error = %v", generateErr)
+		}
+		if response.Partial {
+			part := response.Content.Parts[0]
+			if part.Thought {
+				partialThought.WriteString(part.Text)
+			} else {
+				partialText.WriteString(part.Text)
+			}
+			continue
+		}
+		final = response
+	}
+	if partialThought.String() != "Inspecting." || partialText.String() != "Done." {
+		t.Fatalf(
+			"partial response = thought %q, text %q",
+			partialThought.String(),
+			partialText.String(),
+		)
+	}
+	if final == nil || len(final.Content.Parts) != 2 ||
+		!final.Content.Parts[0].Thought || final.Content.Parts[0].Text != "Inspecting." ||
+		final.Content.Parts[1].Thought || final.Content.Parts[1].Text != "Done." {
+		t.Fatalf("final response = %#v", final)
+	}
+	blocks, err := toAnthropicBlocks(final.Content.Parts)
+	if err != nil {
+		t.Fatalf("toAnthropicBlocks() error = %v", err)
+	}
+	encoded, err := json.Marshal(blocks)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if !strings.Contains(string(encoded), `"signature":"thinking-signature"`) {
+		t.Fatalf("round-tripped thinking blocks = %s", encoded)
 	}
 }
 

@@ -62,6 +62,8 @@ type activeRun struct {
 	nextApprovalResolution  uint64
 	pendingUserInputs       map[string]*pendingUserInput
 	pendingMCPElicitations  map[string]*pendingMCPElicitation
+	activeThoughtIDs        map[string]string
+	nextThoughtSequence     uint64
 	acpHandler              *acpRunHandler
 }
 
@@ -872,6 +874,13 @@ func (e *Engine) publishEvent(runRecord store.Run, event *session.Event) {
 	if event.Content == nil {
 		return
 	}
+	thoughtStreamFinished := !event.Partial
+	defer func() {
+		if thoughtStreamFinished {
+			e.finishThoughtStream(runRecord, event)
+		}
+	}()
+	thoughtReplaced := false
 	for _, part := range event.Content.Parts {
 		if part == nil {
 			continue
@@ -915,6 +924,18 @@ func (e *Engine) publishEvent(runRecord store.Run, event *session.Event) {
 			e.hub.Publish(runRecord.ID, "tool_result", payload)
 		case part.Text != "" && (event.Author == "user" || event.Content.Role == genai.RoleUser):
 			continue
+		case part.Text != "" && part.Thought:
+			payload := map[string]any{
+				"id":   e.thoughtStreamID(runRecord, event),
+				"text": part.Text,
+			}
+			addAgentEventMetadata(payload, event)
+			eventType := "thought_delta"
+			if !event.Partial && !thoughtReplaced {
+				eventType = "thought_replace"
+				thoughtReplaced = true
+			}
+			e.hub.Publish(runRecord.ID, eventType, payload)
 		case part.Text != "" && event.Partial:
 			payload := map[string]any{"id": event.ID, "text": part.Text}
 			addAgentEventMetadata(payload, event)
@@ -1042,6 +1063,10 @@ func (e *Engine) Transcript(ctx context.Context, sessionID string) ([]store.Tran
 				item.ToolName = part.FunctionResponse.Name
 				item.ToolCallID = part.FunctionResponse.ID
 				item.ToolOutput = part.FunctionResponse.Response
+			case part.Text != "" && part.Thought:
+				item.Kind = "thought"
+				item.Role = "assistant"
+				item.Text = part.Text
 			case part.Text != "":
 				item.Kind = "message"
 				item.Text = part.Text
@@ -1057,6 +1082,46 @@ func (e *Engine) Transcript(ctx context.Context, sessionID string) ([]store.Tran
 		}
 	}
 	return addTranscriptAttachments(result, runs), nil
+}
+
+func (e *Engine) thoughtStreamID(runRecord store.Run, event *session.Event) string {
+	key := thoughtStreamKey(event)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	active := e.active[runRecord.SessionID]
+	if active == nil || active.runID != runRecord.ID {
+		return fmt.Sprintf("%s:thought:%s", runRecord.ID, event.ID)
+	}
+	if active.activeThoughtIDs == nil {
+		active.activeThoughtIDs = make(map[string]string)
+	}
+	if id := active.activeThoughtIDs[key]; id != "" {
+		return id
+	}
+	active.nextThoughtSequence++
+	id := fmt.Sprintf("%s:thought:%d", runRecord.ID, active.nextThoughtSequence)
+	active.activeThoughtIDs[key] = id
+	return id
+}
+
+func (e *Engine) finishThoughtStream(runRecord store.Run, event *session.Event) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	active := e.active[runRecord.SessionID]
+	if active == nil || active.runID != runRecord.ID {
+		return
+	}
+	delete(active.activeThoughtIDs, thoughtStreamKey(event))
+}
+
+func thoughtStreamKey(event *session.Event) string {
+	if event.IsolationScope != "" {
+		return "delegation:" + event.IsolationScope
+	}
+	if event.Branch != "" {
+		return "branch:" + event.Branch
+	}
+	return "root"
 }
 
 func addTranscriptAttachments(

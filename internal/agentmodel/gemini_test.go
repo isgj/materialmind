@@ -34,6 +34,9 @@ func TestGeminiUsesConfiguredEndpointAPIKeyAndOutputLimit(t *testing.T) {
 			} `json:"contents"`
 			GenerationConfig struct {
 				MaxOutputTokens int32 `json:"maxOutputTokens"`
+				ThinkingConfig  struct {
+					IncludeThoughts bool `json:"includeThoughts"`
+				} `json:"thinkingConfig"`
 			} `json:"generationConfig"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
@@ -45,6 +48,9 @@ func TestGeminiUsesConfiguredEndpointAPIKeyAndOutputLimit(t *testing.T) {
 					requestBody.GenerationConfig.MaxOutputTokens,
 				)
 			}
+			if !requestBody.GenerationConfig.ThinkingConfig.IncludeThoughts {
+				t.Error("thinkingConfig.includeThoughts = false, want true")
+			}
 			if len(requestBody.Contents) != 1 ||
 				requestBody.Contents[0].Role != genai.RoleUser ||
 				len(requestBody.Contents[0].Parts) != 1 ||
@@ -55,7 +61,10 @@ func TestGeminiUsesConfiguredEndpointAPIKeyAndOutputLimit(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{
 			"candidates":[{
-				"content":{"role":"model","parts":[{"text":"Hello"}]},
+				"content":{"role":"model","parts":[
+					{"text":"Inspecting.","thought":true},
+					{"text":"Hello"}
+				]},
 				"finishReason":"STOP"
 			}],
 			"modelVersion":"gemini-test",
@@ -93,8 +102,11 @@ func TestGeminiUsesConfiguredEndpointAPIKeyAndOutputLimit(t *testing.T) {
 	}
 	if response == nil ||
 		response.Content == nil ||
-		len(response.Content.Parts) != 1 ||
-		response.Content.Parts[0].Text != "Hello" {
+		len(response.Content.Parts) != 2 ||
+		!response.Content.Parts[0].Thought ||
+		response.Content.Parts[0].Text != "Inspecting." ||
+		response.Content.Parts[1].Thought ||
+		response.Content.Parts[1].Text != "Hello" {
 		t.Fatalf("GenerateContent() response = %#v", response)
 	}
 }
@@ -144,6 +156,13 @@ func TestGeminiStreamsResponses(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, `data: {
 			"candidates":[{
+				"content":{"role":"model","parts":[{"text":"Inspecting.","thought":true}]}
+			}],
+			"modelVersion":"gemini-test"
+		}
+
+data: {
+			"candidates":[{
 				"content":{"role":"model","parts":[{"text":"Hello"}]},
 				"finishReason":"STOP"
 			}],
@@ -164,7 +183,7 @@ func TestGeminiStreamsResponses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newGemini() error = %v", err)
 	}
-	var partialText, finalText strings.Builder
+	var partialThought, partialText, finalThought, finalText strings.Builder
 	for response, generateErr := range adapter.GenerateContent(
 		context.Background(),
 		&model.LLMRequest{
@@ -179,17 +198,27 @@ func TestGeminiStreamsResponses(t *testing.T) {
 			continue
 		}
 		for _, part := range response.Content.Parts {
-			if response.Partial {
+			switch {
+			case response.Partial && part.Thought:
+				partialThought.WriteString(part.Text)
+			case response.Partial:
 				partialText.WriteString(part.Text)
-			} else {
+			case part.Thought:
+				finalThought.WriteString(part.Text)
+			default:
 				finalText.WriteString(part.Text)
 			}
 		}
 	}
-	if partialText.String() != "Hello" || finalText.String() != "Hello" {
+	if partialThought.String() != "Inspecting." ||
+		partialText.String() != "Hello" ||
+		finalThought.String() != "Inspecting." ||
+		finalText.String() != "Hello" {
 		t.Fatalf(
-			"stream text = partial %q, final %q; want Hello for both",
+			"stream = partial thought %q text %q, final thought %q text %q",
+			partialThought.String(),
 			partialText.String(),
+			finalThought.String(),
 			finalText.String(),
 		)
 	}

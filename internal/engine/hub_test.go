@@ -123,6 +123,73 @@ func TestPublishEventDoesNotStreamUserTextAsAssistantText(t *testing.T) {
 	}
 }
 
+func TestPublishEventStreamsADKThoughtAsAgentNote(t *testing.T) {
+	hub := NewHub()
+	hub.Create("run-1")
+	engine := &Engine{
+		hub: hub,
+		active: map[string]*activeRun{
+			"session-1": {runID: "run-1"},
+		},
+	}
+	run := store.Run{ID: "run-1", SessionID: "session-1"}
+	for _, text := range []string{"Inspecting ", "the workspace."} {
+		engine.publishEvent(run, &session.Event{
+			Author: "workspace_agent",
+			LLMResponse: model.LLMResponse{
+				Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{
+					Text: text, Thought: true,
+				}}},
+				Partial: true,
+			},
+		})
+	}
+	engine.publishEvent(run, &session.Event{
+		ID:     "event-final",
+		Author: "workspace_agent",
+		LLMResponse: model.LLMResponse{Content: &genai.Content{
+			Role: genai.RoleModel,
+			Parts: []*genai.Part{
+				{Thought: true, ThoughtSignature: []byte("opaque")},
+				{Text: "Inspecting the workspace.", Thought: true},
+				{Text: "Done."},
+			},
+		}},
+	})
+	hub.Complete("run-1")
+
+	events, ok := hub.Subscribe(context.Background(), "run-1", 0)
+	if !ok {
+		t.Fatal("Subscribe() ok = false")
+	}
+	var collected []StreamEvent
+	for event := range events {
+		collected = append(collected, event)
+	}
+	wantTypes := []string{"thought_delta", "thought_delta", "thought_replace", "message_complete"}
+	if len(collected) != len(wantTypes) {
+		t.Fatalf("stream events = %#v, want %d events", collected, len(wantTypes))
+	}
+	var thoughtID any
+	for index, wantType := range wantTypes {
+		if collected[index].Type != wantType {
+			t.Fatalf("event %d type = %q, want %q", index, collected[index].Type, wantType)
+		}
+		if index >= 3 {
+			continue
+		}
+		payload, ok := collected[index].Data.(map[string]any)
+		if !ok {
+			t.Fatalf("thought payload = %T, want map[string]any", collected[index].Data)
+		}
+		if index == 0 {
+			thoughtID = payload["id"]
+		} else if payload["id"] != thoughtID {
+			t.Fatalf("thought event ID = %#v, want %#v", payload["id"], thoughtID)
+		}
+	}
+}
+
 func TestPublishEventStreamsSubAgentLifecycleAndChildMetadata(t *testing.T) {
 	hub := NewHub()
 	hub.Create("run-1")

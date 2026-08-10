@@ -495,6 +495,51 @@ describe('ChatComponent composer keyboard', () => {
     ]);
   });
 
+  it('keeps streamed ADK thoughts inside the matching sub-agent notes', async () => {
+    await fixture.whenStable();
+    vi.stubGlobal('EventSource', StubEventSource);
+    component.attachStream('run-1');
+    const source = StubEventSource.latest;
+
+    source?.emit('subagent_started', {
+      id: 'delegation-1',
+      name: 'workspace_explorer',
+      label: 'Workspace explorer',
+      task: 'Inspect the workspace.',
+    });
+    source?.emit('thought_delta', {
+      id: 'thought-1',
+      text: 'Inspecting ',
+      delegationId: 'delegation-1',
+      agentName: 'workspace_explorer',
+      agentLabel: 'Workspace explorer',
+    });
+    expect(component.liveActivity()[0]).toMatchObject({
+      kind: 'subagent',
+      activities: [{ kind: 'note', active: true }],
+    });
+    source?.emit('thought_replace', {
+      id: 'thought-1',
+      text: 'Inspecting the workspace.',
+      delegationId: 'delegation-1',
+      agentName: 'workspace_explorer',
+      agentLabel: 'Workspace explorer',
+    });
+
+    const delegation = component.liveActivity()[0];
+    expect(delegation).toMatchObject({
+      kind: 'subagent',
+      id: 'delegation-1',
+      activities: [
+        {
+          kind: 'note',
+          text: 'Inspecting the workspace.',
+          active: false,
+        },
+      ],
+    });
+  });
+
   it('keeps the composer width stable for visually wrapped text', () => {
     const textarea = document.createElement('textarea');
     textarea.value = 'A long prompt that wraps visually but contains no explicit newline.';
