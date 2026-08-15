@@ -556,12 +556,25 @@ func (e *Engine) execute(
 		return
 	}
 	var beforeModelCallbacks []llmagent.BeforeModelCallback
+	var afterModelCallbacks []llmagent.AfterModelCallback
+	var onModelErrorCallbacks []llmagent.OnModelErrorCallback
 	if runRecord.ContextWindowTokens > 0 {
 		summarizerConfig := modelConfig
 		summarizerConfig.GenerationSettings.MaxOutputTokens = contextCompactionSummaryTokenLimit(
 			runRecord.ContextWindowTokens,
 		)
-		summarizerConfig.GenerationSettings.ReasoningEffort = nil
+		// The summarizer output budget must cover the model's internal
+		// reasoning, not only the summary text: thinking models that keep the
+		// provider default can spend the whole budget on reasoning and return
+		// no visible text, which fails the compaction. The OpenAI adapters
+		// accept effort "none" to disable thinking for this call; the Gemini
+		// and Anthropic adapters reject any effort, so they keep the provider
+		// default.
+		if runRecord.APICompatibility == agentmodel.CompatibilityOpenAIChatCompletions ||
+			runRecord.APICompatibility == agentmodel.CompatibilityOpenAIResponses {
+			noReasoningEffort := "none"
+			summarizerConfig.GenerationSettings.ReasoningEffort = &noReasoningEffort
+		}
 		summarizer, summarizerErr := agentmodel.New(summarizerConfig)
 		if summarizerErr != nil {
 			finalStatus, finalError = "failed", summarizerErr.Error()
@@ -576,6 +589,8 @@ func (e *Engine) execute(
 			e.handleContextCompaction(ctx, runRecord.ID, update)
 		}
 		beforeModelCallbacks = append(beforeModelCallbacks, compactor.beforeModel)
+		afterModelCallbacks = append(afterModelCallbacks, compactor.afterModel)
+		onModelErrorCallbacks = append(onModelErrorCallbacks, compactor.onModelError)
 	}
 	subAgentModel := &approvalYieldModel{LLM: modelAdapter}
 	coordinatedModel := &approvalYieldModel{LLM: &mixedToolBatchModel{LLM: modelAdapter}}
@@ -636,9 +651,11 @@ func (e *Engine) execute(
 			skillCatalog,
 			mcpServers,
 		),
-		Tools:                tools,
-		BeforeToolCallbacks:  []llmagent.BeforeToolCallback{rejectMalformedFunctionArguments},
-		BeforeModelCallbacks: beforeModelCallbacks,
+		Tools:                 tools,
+		BeforeToolCallbacks:   []llmagent.BeforeToolCallback{rejectMalformedFunctionArguments},
+		BeforeModelCallbacks:  beforeModelCallbacks,
+		AfterModelCallbacks:   afterModelCallbacks,
+		OnModelErrorCallbacks: onModelErrorCallbacks,
 	})
 	if err != nil {
 		finalStatus, finalError = "failed", fmt.Sprintf("create ADK agent: %v", err)

@@ -22,7 +22,11 @@ import (
 )
 
 const (
-	contextCompactionStateKey    = "_materialmind_context_compaction_v1"
+	contextCompactionStateKey = "_materialmind_context_compaction_v1"
+	// contextCompactionUsageKey stores the provider-measured prompt token
+	// count of the last sent request so beforeModel can project usage for
+	// providers that report usage.
+	contextCompactionUsageKey    = "_materialmind_context_usage_v1"
 	contextCompactionMetadataKey = "_materialmind_context_compaction_event_v1"
 	contextCompactionEventType   = "context_compaction"
 
@@ -30,10 +34,45 @@ const (
 	contextCompactionTargetPercent  = int64(30)
 	contextCompactionSummaryPercent = int64(1)
 
-	contextCompactionCharsPerToken = int64(4)
-	contextCompactionMinSummary    = int64(512)
-	contextCompactionMaxSummary    = int64(8192)
+	// contextCompactionBytesPerTwoTokens expresses the fallback token density
+	// as 2.5 bytes/token (5 bytes per 2 tokens) using integer arithmetic.
+	// Real agent payloads (JSON-heavy tool calls and results) measure about
+	// 2.5 bytes/token; the previous 4 bytes/token under-estimated usage by
+	// roughly 1.6x and let requests through that the provider rejected.
+	contextCompactionBytesPerTwoTokens = int64(5)
+	contextCompactionMinSummary        = int64(512)
+	contextCompactionMaxSummary        = int64(8192)
 )
+
+// contextLengthErrorMarkers identifies provider rejections caused by an
+// oversized prompt so the engine can force a compaction and unstick the
+// session instead of failing every retry.
+//
+// Only unambiguous overflow phrases are matched: broad markers such as
+// "max_tokens" or "token limit" also appear in parameter-validation and
+// quota 400s (e.g. "Invalid value for 'max_tokens': must be between 1 and
+// N"), and misclassifying those would bleed context lossily and mask the
+// real error on every retry.
+var contextLengthErrorMarkers = []string{
+	"context length",
+	"context_length",
+	"context window",
+	"too many tokens",
+	"maximum context",
+	"prompt is too long",
+	"exceeds the context",
+	"input + ",
+}
+
+// contextCompactionFallbackSummary is checkpointed when summarization fails,
+// so the oversized prefix is still dropped from the request and the session
+// can continue instead of re-failing on the same oversized request.
+const contextCompactionFallbackSummary = "Earlier conversation context was dropped because it could not be summarized. Continue from the remaining conversation and re-inspect the workspace when earlier details are needed."
+
+// contextCompactionDroppedTailNote is appended when the summarizer budget
+// runs out before the whole prefix is folded in, so the omission stays
+// visible in the continued conversation.
+const contextCompactionDroppedTailNote = "Note: the most recent portion of the summarized history exceeded the compaction budget and was not included in this summary."
 
 const contextCompactionInstruction = `Compact the supplied coding-agent history into a precise continuation summary.
 
@@ -52,6 +91,15 @@ type contextCompactor struct {
 	maxOutputTokens     int64
 	summaryOutputTokens int64
 	onUpdate            func(agent.Context, contextCompactionUpdate)
+
+	// Per-run measured usage projection. beforeModel records the request it
+	// sends (lastSentContentsCount/lastSentLastDigest); afterModel fills
+	// measuredPromptTokens when the provider reports usage. The same record
+	// is persisted to session state under contextCompactionUsageKey for the
+	// next run.
+	lastSentContentsCount int
+	lastSentLastDigest    string
+	measuredPromptTokens  int64
 }
 
 type contextCompactionUpdate struct {
@@ -96,17 +144,56 @@ func (c *contextCompactor) beforeModel(
 	if err != nil {
 		return nil, fmt.Errorf("estimate model context: %w", err)
 	}
-	triggerTokens := percentage(c.maxContextTokens, contextCompactionTriggerPercent)
-	if fullTokens < triggerTokens {
+	// Budget the input against I_max = window - output reserve: the provider
+	// rejects a call when input + output exceeds the window, so the trigger
+	// is a percentage of I_max, not of the full window.
+	triggerTokens := c.compactionTriggerTokens(request)
+	inputTokens := fullTokens - c.outputTokenReserve(request)
+	// Project against the contents that will actually be sent (checkpoint
+	// re-applied): usage records are anchored to sent contents, so
+	// validating them against the full, un-compacted contents would fail
+	// after the first compaction and kill the measured path for the rest
+	// of the session.
+	projectedTokens := c.projectedInputTokens(
+		ctx,
+		c.checkpointedContents(ctx, originalContents),
+	)
+	decisionTokens := max(inputTokens, projectedTokens)
+	if decisionTokens < triggerTokens {
+		c.recordSentRequest(originalContents)
 		return nil, nil
 	}
+	if projectedTokens > inputTokens {
+		slog.InfoContext(
+			ctx,
+			"context compaction triggered by measured usage",
+			"session_id", ctx.SessionID(),
+			"measured_tokens", projectedTokens,
+			"estimated_tokens", inputTokens,
+			"trigger_tokens", triggerTokens,
+		)
+	}
+	return nil, c.compactRequest(ctx, request, fullTokens, false)
+}
+
+// compactRequest summarizes and drops the oldest contents so the request
+// fits the context budget. It is used both when the estimate or the
+// measured-usage projection crosses the compaction trigger and when the
+// provider has already rejected the request as too long (forced).
+func (c *contextCompactor) compactRequest(
+	ctx agent.Context,
+	request *model.LLMRequest,
+	estimatedTokens int64,
+	forced bool,
+) (returnErr error) {
+	originalContents := request.Contents
 
 	workingContents := originalContents
 	prefixContentCount := 0
 	insertedSummaryContents := 0
 	checkpoint, found, err := loadContextCompactionCheckpoint(ctx, originalContents)
 	if err != nil {
-		return nil, fmt.Errorf("load context compaction checkpoint: %w", err)
+		return fmt.Errorf("load context compaction checkpoint: %w", err)
 	}
 	if found {
 		workingContents = contentsWithContextSummary(
@@ -119,28 +206,30 @@ func (c *contextCompactor) beforeModel(
 		insertedSummaryContents = len(workingContents) -
 			(len(originalContents) - prefixContentCount)
 		if insertedSummaryContents < 0 || insertedSummaryContents > 1 {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"compact model context: invalid summary content count %d",
 				insertedSummaryContents,
 			)
 		}
-		compactedTokens, estimateErr := c.estimateRequestTokens(request, workingContents)
+		compactedTokens, estimateErr := c.estimateInputTokens(request, workingContents)
 		if estimateErr != nil {
-			return nil, fmt.Errorf("estimate compacted model context: %w", estimateErr)
+			return fmt.Errorf("estimate compacted model context: %w", estimateErr)
 		}
-		if compactedTokens < triggerTokens {
+		if compactedTokens < c.compactionTriggerTokens(request) {
 			request.Contents = workingContents
-			return nil, nil
+			c.recordSentRequest(workingContents)
+			return nil
 		}
 	}
 
 	cut, err := c.compactionCut(request, workingContents, found)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if cut <= 0 {
 		request.Contents = workingContents
-		return nil, nil
+		c.recordSentRequest(workingContents)
+		return nil
 	}
 
 	newPrefixContentCount := cut
@@ -149,7 +238,7 @@ func (c *contextCompactor) beforeModel(
 	}
 	if newPrefixContentCount <= prefixContentCount ||
 		newPrefixContentCount > len(originalContents) {
-		return nil, fmt.Errorf(
+		return fmt.Errorf(
 			"compact model context: invalid checkpoint advance from %d to %d",
 			prefixContentCount,
 			newPrefixContentCount,
@@ -162,7 +251,7 @@ func (c *contextCompactor) beforeModel(
 			newPrefixContentCount,
 		),
 		Status:                "running",
-		EstimatedTokensBefore: fullTokens,
+		EstimatedTokensBefore: estimatedTokens,
 		MaxContextTokens:      c.maxContextTokens,
 		SummarizedContents:    newPrefixContentCount,
 	}
@@ -180,14 +269,26 @@ func (c *contextCompactor) beforeModel(
 		c.notify(ctx, update)
 	}()
 
-	summary, err := c.summarize(ctx, request.Model, workingContents[:cut])
-	if err != nil {
-		return nil, fmt.Errorf("compact model context: %w", err)
+	// A summarizer failure must not fail the run on either path: drop the
+	// prefix with a placeholder summary so the session continues below the
+	// window instead of re-failing on the same oversized request (forced:
+	// after a provider rejection; otherwise: estimate/usage trigger).
+	summary, summarizeErr := c.summarize(ctx, request.Model, workingContents[:cut])
+	if summarizeErr != nil {
+		slog.WarnContext(
+			ctx,
+			"summarize model context failed; dropping prefix without summary",
+			"session_id", ctx.SessionID(),
+			"forced", forced,
+			"error", summarizeErr.Error(),
+		)
+		summary = contextCompactionFallbackSummary
+		update.Error = fmt.Sprintf("summarize: %v", summarizeErr)
 	}
 
 	digest, err := contentDigest(originalContents[:newPrefixContentCount])
 	if err != nil {
-		return nil, fmt.Errorf("digest compacted model context: %w", err)
+		return fmt.Errorf("digest compacted model context: %w", err)
 	}
 	checkpoint = contextCompactionCheckpoint{
 		Version:            1,
@@ -196,21 +297,22 @@ func (c *contextCompactor) beforeModel(
 		Summary:            summary,
 	}
 	if err := saveContextCompactionCheckpoint(ctx, checkpoint); err != nil {
-		return nil, fmt.Errorf("save context compaction checkpoint: %w", err)
+		return fmt.Errorf("save context compaction checkpoint: %w", err)
 	}
 
 	request.Contents = contentsWithContextSummary(
 		summary,
 		originalContents[newPrefixContentCount:],
 	)
+	c.recordSentRequest(request.Contents)
 	compactedTokens, err := c.estimateRequestTokens(request, request.Contents)
 	if err != nil {
-		return nil, fmt.Errorf("estimate compacted model context: %w", err)
+		return fmt.Errorf("estimate compacted model context: %w", err)
 	}
 	slog.Info(
 		"compacted model context",
 		"session_id", ctx.SessionID(),
-		"estimated_tokens_before", fullTokens,
+		"estimated_tokens_before", estimatedTokens,
 		"estimated_tokens_after", compactedTokens,
 		"max_context_tokens", c.maxContextTokens,
 		"summarized_contents", newPrefixContentCount,
@@ -219,7 +321,203 @@ func (c *contextCompactor) beforeModel(
 	update.EstimatedTokensAfter = compactedTokens
 	c.notify(ctx, update)
 	terminalNotified = true
-	return nil, nil
+	return nil
+}
+
+// onModelError force-compacts the session context when the provider rejects
+// the request as too long, so the next run starts from the checkpoint instead
+// of re-failing on the same oversized request. The returned error replaces
+// the raw provider rejection with an actionable message.
+func (c *contextCompactor) onModelError(
+	ctx agent.Context,
+	request *model.LLMRequest,
+	responseErr error,
+) (*model.LLMResponse, error) {
+	if c == nil || request == nil || responseErr == nil ||
+		!isContextLengthError(responseErr) {
+		return nil, responseErr
+	}
+	estimatedTokens := int64(0)
+	if tokens, estimateErr := c.estimateRequestTokens(request, request.Contents); estimateErr == nil {
+		estimatedTokens = tokens
+	}
+	if err := c.compactRequest(ctx, request, estimatedTokens, true); err != nil {
+		slog.WarnContext(
+			ctx,
+			"forced context compaction failed",
+			"session_id", ctx.SessionID(),
+			"error", err.Error(),
+		)
+		return nil, responseErr
+	}
+	slog.WarnContext(
+		ctx,
+		"forced context compaction after model context-length error",
+		"session_id", ctx.SessionID(),
+		"model_error", responseErr.Error(),
+	)
+	return nil, errors.New(
+		"the model context window was exceeded; the session context was compacted, send the next message to continue",
+	)
+}
+
+func isContextLengthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	for _, marker := range contextLengthErrorMarkers {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// afterModel records the provider-reported prompt token count of the request
+// that produced the response, enabling measured-usage projection in later
+// beforeModel calls. Providers that do not report usage are skipped.
+func (c *contextCompactor) afterModel(
+	ctx agent.Context,
+	response *model.LLMResponse,
+	responseErr error,
+) (*model.LLMResponse, error) {
+	if c == nil || response == nil || responseErr != nil ||
+		c.lastSentContentsCount == 0 {
+		return response, responseErr
+	}
+	if response.UsageMetadata == nil || response.UsageMetadata.PromptTokenCount <= 0 {
+		return response, responseErr
+	}
+	c.measuredPromptTokens = int64(response.UsageMetadata.PromptTokenCount)
+	record := contextUsageRecord{
+		Version:           1,
+		PromptTokens:      c.measuredPromptTokens,
+		ContentsCount:     c.lastSentContentsCount,
+		LastContentDigest: c.lastSentLastDigest,
+	}
+	if encoded, err := json.Marshal(record); err == nil {
+		if setErr := ctx.State().Set(contextCompactionUsageKey, string(encoded)); setErr != nil {
+			slog.WarnContext(
+				ctx,
+				"save context usage record",
+				"session_id", ctx.SessionID(),
+				"error", setErr.Error(),
+			)
+		}
+	}
+	return response, responseErr
+}
+
+type contextUsageRecord struct {
+	Version           int    `json:"version"`
+	PromptTokens      int64  `json:"promptTokens"`
+	ContentsCount     int    `json:"contentsCount"`
+	LastContentDigest string `json:"lastContentDigest"`
+}
+
+// recordSentRequest remembers the request that will be sent to the model so
+// afterModel can pair the provider-reported usage with its contents.
+func (c *contextCompactor) recordSentRequest(contents []*genai.Content) {
+	if c == nil {
+		return
+	}
+	c.lastSentContentsCount = 0
+	c.lastSentLastDigest = ""
+	c.measuredPromptTokens = 0
+	if len(contents) == 0 {
+		return
+	}
+	digest, err := contentDigest(contents[len(contents)-1:])
+	if err != nil {
+		return
+	}
+	c.lastSentContentsCount = len(contents)
+	c.lastSentLastDigest = digest
+}
+
+// checkpointedContents returns the request contents as they will be sent
+// after re-applying any existing compaction checkpoint, or the full contents
+// when no checkpoint applies. Measured-usage projection must validate its
+// record against this base because usage records are anchored to the
+// contents that were actually sent.
+func (c *contextCompactor) checkpointedContents(
+	ctx agent.Context,
+	contents []*genai.Content,
+) []*genai.Content {
+	checkpoint, found, err := loadContextCompactionCheckpoint(ctx, contents)
+	if err != nil || !found {
+		return contents
+	}
+	return contentsWithContextSummary(
+		checkpoint.Summary,
+		contents[checkpoint.PrefixContentCount:],
+	)
+}
+
+// projectedInputTokens estimates the input size of the current request from
+// the provider-measured usage of the last sent request plus the locally
+// estimated size of the contents appended since then. It returns 0 when no
+// valid measurement is available.
+func (c *contextCompactor) projectedInputTokens(
+	ctx agent.Context,
+	contents []*genai.Content,
+) int64 {
+	record := contextUsageRecord{
+		Version:           1,
+		PromptTokens:      c.measuredPromptTokens,
+		ContentsCount:     c.lastSentContentsCount,
+		LastContentDigest: c.lastSentLastDigest,
+	}
+	if !validContextUsageRecord(record, contents) {
+		stored, ok := loadContextUsageRecord(ctx)
+		if !ok || !validContextUsageRecord(stored, contents) {
+			return 0
+		}
+		record = stored
+	}
+	projected := record.PromptTokens
+	for _, content := range contents[record.ContentsCount:] {
+		tokens, err := estimateJSONTokens(content)
+		if err != nil {
+			return 0
+		}
+		projected += tokens
+	}
+	return projected
+}
+
+func validContextUsageRecord(record contextUsageRecord, contents []*genai.Content) bool {
+	if record.Version != 1 || record.PromptTokens <= 0 {
+		return false
+	}
+	if record.ContentsCount <= 0 || record.ContentsCount > len(contents) {
+		return false
+	}
+	digest, err := contentDigest(contents[record.ContentsCount-1 : record.ContentsCount])
+	if err != nil || digest != record.LastContentDigest {
+		return false
+	}
+	return true
+}
+
+func loadContextUsageRecord(ctx agent.Context) (contextUsageRecord, bool) {
+	raw, err := ctx.State().Get(contextCompactionUsageKey)
+	if errors.Is(err, session.ErrStateKeyNotExist) {
+		return contextUsageRecord{}, false
+	}
+	if err != nil {
+		return contextUsageRecord{}, false
+	}
+	encoded, ok := raw.(string)
+	if !ok {
+		return contextUsageRecord{}, false
+	}
+	var record contextUsageRecord
+	if err := json.Unmarshal([]byte(encoded), &record); err != nil {
+		return contextUsageRecord{}, false
+	}
+	return record, true
 }
 
 func (c *contextCompactor) notify(ctx agent.Context, update contextCompactionUpdate) {
@@ -314,9 +612,8 @@ func (c *contextCompactor) compactionCut(
 	if err != nil {
 		return 0, fmt.Errorf("estimate fixed model context: %w", err)
 	}
-	targetTokens := percentage(c.maxContextTokens, contextCompactionTargetPercent)
-	suffixBudget := targetTokens - fixedTokens - c.outputTokenReserve(request) -
-		c.summaryOutputTokens
+	targetTokens := percentage(c.inputBudgetTokens(request), contextCompactionTargetPercent)
+	suffixBudget := targetTokens - fixedTokens - c.summaryOutputTokens
 	suffixBudget = max(suffixBudget, 0)
 
 	cut := len(contents)
@@ -357,11 +654,22 @@ func (c *contextCompactor) estimateRequestTokens(
 	request *model.LLMRequest,
 	contents []*genai.Content,
 ) (int64, error) {
+	inputTokens, err := c.estimateInputTokens(request, contents)
+	if err != nil {
+		return 0, err
+	}
+	return inputTokens + c.outputTokenReserve(request), nil
+}
+
+func (c *contextCompactor) estimateInputTokens(
+	request *model.LLMRequest,
+	contents []*genai.Content,
+) (int64, error) {
 	fixedTokens, err := c.estimateFixedTokens(request)
 	if err != nil {
 		return 0, err
 	}
-	result := fixedTokens + c.outputTokenReserve(request)
+	result := fixedTokens
 	for _, content := range contents {
 		tokens, estimateErr := estimateJSONTokens(content)
 		if estimateErr != nil {
@@ -392,6 +700,21 @@ func (c *contextCompactor) outputTokenReserve(request *model.LLMRequest) int64 {
 	return max(c.maxOutputTokens, 0)
 }
 
+// inputBudgetTokens is the input budget I_max = window - output reserve: the
+// provider rejects calls whose input plus output allowance exceeds the
+// window, so input estimates and cuts are budgeted against I_max.
+func (c *contextCompactor) inputBudgetTokens(request *model.LLMRequest) int64 {
+	budget := c.maxContextTokens - c.outputTokenReserve(request)
+	if budget < 0 {
+		budget = 0
+	}
+	return budget
+}
+
+func (c *contextCompactor) compactionTriggerTokens(request *model.LLMRequest) int64 {
+	return percentage(c.inputBudgetTokens(request), contextCompactionTriggerPercent)
+}
+
 func (c *contextCompactor) summarize(
 	ctx context.Context,
 	modelName string,
@@ -405,12 +728,22 @@ func (c *contextCompactor) summarize(
 		return "", fmt.Errorf("no context was available to summarize")
 	}
 
-	inputBudgetTokens := percentage(c.maxContextTokens, contextCompactionTargetPercent) -
-		c.summaryOutputTokens
+	// The summarizer runs on the same model with the same window: keep its
+	// own call (instruction + prompt + summary output) inside
+	// min(30% window, I_max) so it can never be rejected as too long.
+	instructionTokens, err := estimateJSONTokens(contextCompactionInstruction)
+	if err != nil {
+		return "", fmt.Errorf("estimate summarizer instruction: %w", err)
+	}
+	inputBudgetTokens := min(
+		percentage(c.maxContextTokens, contextCompactionTargetPercent),
+		c.inputBudgetTokens(nil),
+	)
+	inputBudgetTokens -= c.summaryOutputTokens + instructionTokens
 	inputBudgetTokens = max(inputBudgetTokens, 1024)
-	inputBudgetChars := inputBudgetTokens * contextCompactionCharsPerToken
+	inputBudgetChars := tokensToContextChars(inputBudgetTokens)
 	sectionBudgetChars := inputBudgetChars -
-		c.summaryOutputTokens*contextCompactionCharsPerToken - 1024
+		tokensToContextChars(c.summaryOutputTokens) - 1024
 	sectionBudgetChars = max(sectionBudgetChars, 1024)
 
 	var summary string
@@ -428,11 +761,26 @@ func (c *contextCompactor) summarize(
 		if summarizeErr != nil {
 			return summarizeErr
 		}
-		summary = next
+		// Never regress the accumulated summary: a batch that comes back
+		// without visible text loses only its own content, and the loss
+		// stays visible in the log instead of discarding earlier batches.
+		if strings.TrimSpace(next) == "" {
+			slog.WarnContext(
+				ctx,
+				"context summarizer returned no visible text for a batch; keeping previous summary",
+			)
+		} else {
+			summary = next
+		}
 		batch.Reset()
 		return nil
 	}
 
+	droppedTail := false
+	// Strictly bound the summarizer prompt: flush the batch when a fragment
+	// no longer fits, truncate oversized fragments, and stop once the budget
+	// is exhausted so the summarizer call can never overflow the context.
+outer:
 	for _, section := range sections {
 		for _, fragment := range splitContextSection(section, sectionBudgetChars) {
 			available := inputBudgetChars - int64(len(summary)) -
@@ -441,6 +789,15 @@ func (c *contextCompactor) summarize(
 				if err := flush(); err != nil {
 					return "", err
 				}
+				available = inputBudgetChars - int64(len(summary)) -
+					int64(batch.Len()) - 1024
+			}
+			if available <= 0 {
+				droppedTail = true
+				break outer
+			}
+			if int64(len(fragment)) > available {
+				fragment = truncateContextFragment(fragment, available)
 			}
 			if batch.Len() > 0 {
 				batch.WriteString("\n\n")
@@ -453,6 +810,9 @@ func (c *contextCompactor) summarize(
 	}
 	if strings.TrimSpace(summary) == "" {
 		return "", fmt.Errorf("summarizer returned an empty context")
+	}
+	if droppedTail {
+		summary = summary + "\n\n" + contextCompactionDroppedTailNote
 	}
 	return summary, nil
 }
@@ -767,8 +1127,28 @@ func estimateJSONTokens(value any) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return max((int64(len(encoded))+contextCompactionCharsPerToken-1)/
-		contextCompactionCharsPerToken, 1), nil
+	return max((2*int64(len(encoded))+contextCompactionBytesPerTwoTokens-1)/
+		contextCompactionBytesPerTwoTokens, 1), nil
+}
+
+// tokensToContextChars converts a token budget to a character budget at the
+// fallback density (2.5 chars/token).
+func tokensToContextChars(tokens int64) int64 {
+	return tokens * contextCompactionBytesPerTwoTokens / 2
+}
+
+// truncateContextFragment cuts a fragment to maxChars on a UTF-8 boundary so
+// the summarizer prompt stays within its budget even for oversized tool
+// results.
+func truncateContextFragment(fragment string, maxChars int64) string {
+	if maxChars <= 0 || int64(len(fragment)) <= maxChars {
+		return fragment
+	}
+	end := int(maxChars)
+	for end > 0 && !utf8.RuneStart(fragment[end]) {
+		end--
+	}
+	return fragment[:end]
 }
 
 func contentDigest(contents []*genai.Content) (string, error) {
