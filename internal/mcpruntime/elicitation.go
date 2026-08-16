@@ -142,7 +142,7 @@ func (m *Manager) onlyActiveCallForConnection(connectionKey string) *activeToolC
 
 func safeElicitationURL(rawURL string) (string, error) {
 	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.IsAbs() == false || parsed.Hostname() == "" {
+	if err != nil || !parsed.IsAbs() || parsed.Hostname() == "" {
 		return "", fmt.Errorf("MCP elicitation URL must be an absolute HTTP or HTTPS URL")
 	}
 	parsed.Scheme = strings.ToLower(parsed.Scheme)

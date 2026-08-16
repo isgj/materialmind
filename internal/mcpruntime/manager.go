@@ -1161,16 +1161,6 @@ func changedToolNames(previous, current []*mcp.Tool) ([]string, []string) {
 	return added, removed
 }
 
-func (d ToolDefinition) call(
-	ctx context.Context,
-	arguments map[string]any,
-) (*mcp.CallToolResult, error) {
-	return d.session.CallTool(ctx, &mcp.CallToolParams{
-		Name:      d.OriginalName,
-		Arguments: arguments,
-	})
-}
-
 func listTools(ctx context.Context, session *mcp.ClientSession) ([]*mcp.Tool, error) {
 	var result []*mcp.Tool
 	cursor := ""

@@ -20,22 +20,6 @@ import (
 
 var httpHeaderName = regexp.MustCompile(`^[!#$%&'*+\-.^_` + "`" + `|~0-9A-Za-z]+$`)
 
-type mcpServerInput struct {
-	Name                    string
-	Transport               string
-	Command                 string
-	Arguments               []string
-	Environment             []MCPVariableBinding
-	URL                     string
-	Headers                 []MCPVariableBinding
-	AuthType                string
-	BearerTokenEnvVar       string
-	OAuthClientMode         string
-	OAuthClientID           string
-	OAuthClientSecretEnvVar string
-	OAuthScopes             []string
-}
-
 func (s *Store) ListMCPServers(ctx context.Context) ([]MCPServer, error) {
 	rows, err := s.db.QueryContext(ctx, mcpServerSelect+` ORDER BY lower(name), id`)
 	if err != nil {

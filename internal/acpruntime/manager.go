@@ -305,7 +305,7 @@ func (m *Manager) SetSessionConfigOption(
 	if err != nil {
 		return nil, err
 	}
-	options, err = restoreSessionConfigOptions(
+	if _, err := restoreSessionConfigOptions(
 		ctx,
 		process.connection,
 		agent.Name,
@@ -313,8 +313,7 @@ func (m *Manager) SetSessionConfigOption(
 		options,
 		preferredConfigOptions,
 		!restored,
-	)
-	if err != nil {
+	); err != nil {
 		return nil, err
 	}
 	request, err := newSetSessionConfigOptionRequest(acp.SessionId(sessionID), configID, value)
