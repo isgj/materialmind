@@ -453,22 +453,6 @@ func applyTextReplacements(content []byte, filePath string, edits []TextReplacem
 	return after, nil
 }
 
-func readEditSnapshot(rootPath, filePath string) (editSnapshot, error) {
-	root, err := os.OpenRoot(rootPath)
-	if err != nil {
-		return editSnapshot{}, fmt.Errorf("open workspace: %w", err)
-	}
-	defer root.Close()
-	snapshot, err := readOptionalEditSnapshot(root, filePath)
-	if err != nil {
-		return editSnapshot{}, err
-	}
-	if !snapshot.exists {
-		return editSnapshot{}, fmt.Errorf("inspect %q: %w", filePath, fs.ErrNotExist)
-	}
-	return snapshot, nil
-}
-
 func readOptionalEditSnapshot(root *os.Root, filePath string) (editSnapshot, error) {
 	linkInfo, err := root.Lstat(filePath)
 	if errors.Is(err, fs.ErrNotExist) {

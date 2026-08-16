@@ -14,6 +14,7 @@
     "test:embedded": "npm run frontend:build && go test -tags embed_frontend ./...",
     "test:e2e": "npm --prefix web run e2e",
     "vet": "go vet ./...",
+    "staticcheck": "staticcheck -checks all,-SA1019,-ST1000 ./...",
     "race": "go test -race ./...",
     "verify": "npm run format:check && npm run vet && npm test && npm run test:embedded && npm run build",
     "format": "gofumpt -w cmd internal && npm --prefix web exec -- prettier --write --ignore-path web/.prettierignore web",

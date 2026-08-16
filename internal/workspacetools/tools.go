@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -439,12 +438,4 @@ func filesystemDeniedResult(access filesystemAccess, operation string) deniedRes
 			"reason":    approvalReason(confirmation),
 		}, nil
 	}
-}
-
-func cleanRelativePath(value string) string {
-	value = strings.TrimSpace(filepath.ToSlash(value))
-	if value == "" || value == "/" {
-		return "."
-	}
-	return strings.TrimPrefix(value, "/")
 }

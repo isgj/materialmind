@@ -34,12 +34,24 @@ jobs:
       - name: Install Go formatter
         run: go install mvdan.cc/gofumpt@v0.10.0
 
+      - name: Install staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+
       - name: Install Playwright Chromium
         working-directory: web
         run: npx playwright install --with-deps chromium
 
       - name: Verify source and unit tests
         run: npm run verify
+
+      # -SA1019 (deprecations) is excluded for now: the MCP runtime intentionally
+      # uses the roots and logging features that the MCP protocol deprecated in
+      # 2026-07-28 (SEP-2577) while they remain functional during the
+      # deprecation window. Revisit when migrating off them.
+      # -ST1000 (package comments) is excluded: packages in this repo
+      # intentionally have no package comment.
+      - name: Staticcheck Go source
+        run: npm run staticcheck
 
       - name: Race-test backend
         run: npm run race
