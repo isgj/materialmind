@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -215,6 +216,7 @@ func (e *Engine) runSubAgent(
 	yieldAfterApproval := false
 	pendingApprovalRequests := make(map[string]ToolApprovalRequest)
 	for {
+		iterationEvents := make([]*session.Event, 0, 4)
 		runContext := withApprovalYield(ctx, yieldAfterApproval)
 		for event, runErr := range childRunner.Run(
 			runContext,
@@ -229,6 +231,7 @@ func (e *Engine) runSubAgent(
 			if event == nil {
 				continue
 			}
+			iterationEvents = append(iterationEvents, event)
 			requests, approvalErr := toolApprovalRequests(event)
 			if approvalErr != nil {
 				return "", approvalErr
@@ -265,6 +268,19 @@ func (e *Engine) runSubAgent(
 				result = text
 			}
 		}
+		if resurfaceErr := e.resurfaceSubAgentConfirmations(
+			ctx,
+			runRecord,
+			profile,
+			childSessions,
+			created.Session,
+			ctx.InvocationID(),
+			delegationID,
+			iterationEvents,
+			pendingApprovalRequests,
+		); resurfaceErr != nil {
+			return "", resurfaceErr
+		}
 		if len(pendingApprovalRequests) == 0 {
 			break
 		}
@@ -290,6 +306,66 @@ func (e *Engine) runSubAgent(
 		return "", fmt.Errorf("%s completed without a final report", profile.Name)
 	}
 	return result, nil
+}
+
+// resurfaceSubAgentConfirmations mirrors resurfaceResumedConfirmations for a
+// delegation's in-memory child session. The child runner has the same ADK
+// resume gap: when a resumed child tool requests a new confirmation, the
+// request lands only in the event actions, the delegation would end, and the
+// call would stay blocked inside the discarded child session. The resurfaced
+// event is appended to the child session so the next child runner.Run resumes
+// the original call, then it is persisted and published as a delegated
+// transcript event like every other child event.
+func (e *Engine) resurfaceSubAgentConfirmations(
+	ctx context.Context,
+	runRecord store.Run,
+	profile subAgentProfile,
+	childSessions session.Service,
+	childSession session.Session,
+	parentInvocationID, delegationID string,
+	iterationEvents []*session.Event,
+	pendingApprovals map[string]ToolApprovalRequest,
+) error {
+	requests := danglingConfirmationRequests(iterationEvents)
+	if len(requests) == 0 {
+		return nil
+	}
+	// The session object held by the caller is the copy returned by Create;
+	// the runner appends events to the service's stored session, so reload it
+	// to see the original call the resurfaced confirmation refers to.
+	response, err := childSessions.Get(ctx, &session.GetRequest{
+		AppName:   childSession.AppName(),
+		UserID:    childSession.UserID(),
+		SessionID: childSession.ID(),
+	})
+	if err != nil {
+		return fmt.Errorf("load %s session for resurfaced confirmations: %w", profile.Name, err)
+	}
+	return e.resurfaceDanglingConfirmations(
+		ctx,
+		runRecord,
+		profile.Name,
+		childSession.ID(),
+		response.Session.Events(),
+		requests,
+		func(event *session.Event) error {
+			if err := childSessions.AppendEvent(ctx, response.Session, event); err != nil {
+				return fmt.Errorf("append %s resurfaced confirmation: %w", profile.Name, err)
+			}
+			return nil
+		},
+		func(event *session.Event) error {
+			delegatedEvent := delegatedTranscriptEvent(event, profile, parentInvocationID, delegationID)
+			if !delegatedEvent.Partial {
+				if err := e.sessionService.AppendTranscriptEvent(ctx, AppName, UserID, runRecord.SessionID, delegatedEvent); err != nil {
+					return err
+				}
+			}
+			e.publishEvent(runRecord, delegatedEvent)
+			return nil
+		},
+		pendingApprovals,
+	)
 }
 
 func (e *Engine) publishSubAgentCompletion(

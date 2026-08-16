@@ -685,6 +685,7 @@ func (e *Engine) execute(
 			options = append(options, runner.WithYieldUserMessage())
 		}
 		runContext := withApprovalYield(ctx, yieldAfterApproval)
+		iterationEvents := make([]*session.Event, 0, 4)
 		for event, runErr := range agentRunner.Run(runContext, UserID, runRecord.SessionID, message, agent.RunConfig{StreamingMode: agent.StreamingModeSSE}, options...) {
 			if runErr != nil {
 				if errors.Is(runErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
@@ -697,6 +698,7 @@ func (e *Engine) execute(
 			if event == nil {
 				continue
 			}
+			iterationEvents = append(iterationEvents, event)
 			if runRecord.InvocationID == "" && event.InvocationID != "" {
 				runRecord.InvocationID = event.InvocationID
 				if updated, updateErr := e.store.UpdateRun(ctx, runRecord.ID, "running", event.InvocationID, ""); updateErr == nil {
@@ -723,6 +725,20 @@ func (e *Engine) execute(
 		}
 		if ctx.Err() != nil {
 			finalStatus = "cancelled"
+			return
+		}
+		if resurfaceErr := e.resurfaceResumedConfirmations(
+			ctx,
+			runRecord,
+			agentInstance.Name(),
+			iterationEvents,
+			pendingApprovalRequests,
+		); resurfaceErr != nil {
+			if errors.Is(ctx.Err(), context.Canceled) {
+				finalStatus = "cancelled"
+				return
+			}
+			finalStatus, finalError = "failed", resurfaceErr.Error()
 			return
 		}
 		if len(pendingApprovalRequests) == 0 {
