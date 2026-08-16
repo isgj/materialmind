@@ -74,7 +74,7 @@ describe('AgentNoteComponent', () => {
     expect(details.join(' ')).not.toContain('Formulating review comments');
   });
 
-  it('opens each thought while the note is active and collapses them when it completes', async () => {
+  it('opens the streaming thought while the note is active and collapses it when it completes', async () => {
     fixture.componentRef.setInput(
       'text',
       '**Evaluating test structure**\n\nThe current tests cover the main behavior.',
@@ -96,5 +96,78 @@ describe('AgentNoteComponent', () => {
     await fixture.whenStable();
 
     expect(header.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('keeps only the streaming thought open while the note is active', async () => {
+    const firstThought = [
+      '**Evaluating test structure**',
+      '',
+      'The current tests cover the main behavior.',
+    ].join('\n');
+    const secondThought = [
+      firstThought,
+      '',
+      '**Formulating review comments**',
+      '',
+      'I am preparing the findings.',
+    ].join('\n');
+    const thirdThought = [
+      secondThought,
+      '',
+      '**Adjusting test severity**',
+      '',
+      'The final severity should reflect the impact.',
+    ].join('\n');
+
+    const expandedHeaders = (): string[] =>
+      Array.from(
+        (fixture.nativeElement as HTMLElement).querySelectorAll<HTMLElement>(
+          'mat-expansion-panel-header',
+        ),
+      ).map((header) => header.getAttribute('aria-expanded') ?? '');
+
+    fixture.componentRef.setInput('text', firstThought);
+    fixture.componentRef.setInput('active', true);
+    await fixture.whenStable();
+    expect(expandedHeaders()).toEqual(['true']);
+
+    fixture.componentRef.setInput('text', secondThought);
+    await fixture.whenStable();
+    expect(expandedHeaders()).toEqual(['false', 'true']);
+
+    fixture.componentRef.setInput('text', thirdThought);
+    await fixture.whenStable();
+    expect(expandedHeaders()).toEqual(['false', 'false', 'true']);
+
+    fixture.componentRef.setInput('active', false);
+    await fixture.whenStable();
+    expect(expandedHeaders()).toEqual(['false', 'false', 'false']);
+  });
+
+  it('shows an open collapsible for a thought whose content has not streamed yet', async () => {
+    fixture.componentRef.setInput(
+      'text',
+      [
+        '**Evaluating test structure**',
+        '',
+        'The current tests cover the main behavior.',
+        '',
+        '**Formulating review comments**',
+      ].join('\n'),
+    );
+    fixture.componentRef.setInput('active', true);
+    await fixture.whenStable();
+
+    const element = fixture.nativeElement as HTMLElement;
+    const headers = Array.from(element.querySelectorAll<HTMLElement>('mat-expansion-panel-header'));
+    expect(headers).toHaveLength(2);
+    expect(headers.map((header) => header.getAttribute('aria-expanded'))).toEqual([
+      'false',
+      'true',
+    ]);
+    const details = Array.from(element.querySelectorAll('.agent-thought-detail'), (detail) =>
+      detail.textContent?.trim(),
+    );
+    expect(details).toEqual(['The current tests cover the main behavior.', '']);
   });
 });
