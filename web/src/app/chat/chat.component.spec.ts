@@ -540,6 +540,34 @@ describe('ChatComponent composer keyboard', () => {
     });
   });
 
+  it('keeps only the streaming root thought note active', async () => {
+    await fixture.whenStable();
+    vi.stubGlobal('EventSource', StubEventSource);
+    component.attachStream('run-1');
+    const source = StubEventSource.latest;
+
+    source?.emit('thought_delta', { id: 'thought-1', text: 'First ' });
+    source?.emit('thought_delta', { id: 'thought-1', text: 'thought.' });
+    expect(component.liveActivity()).toEqual([
+      { kind: 'note', id: 'thought-1', text: 'First thought.', active: true },
+    ]);
+
+    source?.emit('thought_delta', { id: 'thought-2', text: 'Second thought.' });
+    expect(component.liveActivity()).toEqual([
+      { kind: 'note', id: 'thought-1', text: 'First thought.', active: false },
+      { kind: 'note', id: 'thought-2', text: 'Second thought.', active: true },
+    ]);
+
+    source?.emit('thought_replace', {
+      id: 'thought-2',
+      text: 'Second thought, final.',
+    });
+    expect(component.liveActivity()).toEqual([
+      { kind: 'note', id: 'thought-1', text: 'First thought.', active: false },
+      { kind: 'note', id: 'thought-2', text: 'Second thought, final.', active: false },
+    ]);
+  });
+
   it('keeps the composer width stable for visually wrapped text', () => {
     const textarea = document.createElement('textarea');
     textarea.value = 'A long prompt that wraps visually but contains no explicit newline.';

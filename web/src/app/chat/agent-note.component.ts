@@ -96,8 +96,11 @@ function noteThoughts(markdown: string): readonly AgentThought[] {
       </span>
       <mat-accordion class="agent-thoughts" multi aria-label="Agent thoughts">
         @for (thought of thoughts(); track $index) {
-          @if (thought.detail) {
-            <mat-expansion-panel class="agent-thought-panel" [expanded]="active()">
+          @if (thought.detail || $index === streamingThoughtIndex()) {
+            <mat-expansion-panel
+              class="agent-thought-panel"
+              [expanded]="$index === streamingThoughtIndex()"
+            >
               <mat-expansion-panel-header>
                 <mat-panel-title class="agent-thought-title">
                   <span>{{ thought.title }}</span>
@@ -244,4 +247,13 @@ export class AgentNoteComponent {
   readonly text = input.required<string>();
   readonly active = input(false);
   protected readonly thoughts = computed(() => noteThoughts(this.text()));
+
+  // While the note is streaming, only the last parsed thought is the one
+  // receiving text: it is shown expanded as soon as its heading arrives, it
+  // closes as soon as the next thought heading starts, and it closes again
+  // when the note completes. -1 means no thought is streaming, so every
+  // thought renders collapsed like a finished note.
+  protected readonly streamingThoughtIndex = computed(() =>
+    this.active() ? this.thoughts().length - 1 : -1,
+  );
 }

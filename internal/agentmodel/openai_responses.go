@@ -108,12 +108,28 @@ func (m *OpenAIResponses) GenerateContent(
 		responseStream := m.responses.NewStreaming(ctx, params)
 		defer responseStream.Close()
 		var finalResponse *openairesponses.Response
+		var reasoningPart [2]int64
+		reasoningPartEmitted := false
 		for responseStream.Next() {
 			event := responseStream.Current()
 			switch event.Type {
 			case "response.reasoning_summary_text.delta":
-				delta := event.AsResponseReasoningSummaryTextDelta().Delta
-				if delta != "" && !yield(openAIResponsesPartial(delta, modelName, true), nil) {
+				deltaEvent := event.AsResponseReasoningSummaryTextDelta()
+				if deltaEvent.Delta == "" {
+					continue
+				}
+				// The completed response joins reasoning summary parts with
+				// a blank line. Emit the same separator when a new part
+				// starts so the streamed thought text keeps the paragraph
+				// structure of the final one.
+				summaryPart := [2]int64{deltaEvent.OutputIndex, deltaEvent.SummaryIndex}
+				if reasoningPartEmitted && summaryPart != reasoningPart &&
+					!yield(openAIResponsesPartial("\n\n", modelName, true), nil) {
+					return
+				}
+				reasoningPart = summaryPart
+				reasoningPartEmitted = true
+				if !yield(openAIResponsesPartial(deltaEvent.Delta, modelName, true), nil) {
 					return
 				}
 			case "response.output_text.delta":

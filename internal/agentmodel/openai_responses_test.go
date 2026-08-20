@@ -387,6 +387,50 @@ func TestOpenAIResponsesStreamsTextAndReasoningSummary(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponsesSeparatesStreamedReasoningSummaryParts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"type\":\"response.reasoning_summary_text.delta\",\"sequence_number\":1,\"item_id\":\"rs-1\",\"output_index\":0,\"summary_index\":0,\"delta\":\"Inspecting the project.\"}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.reasoning_summary_text.delta\",\"sequence_number\":2,\"item_id\":\"rs-1\",\"output_index\":0,\"summary_index\":1,\"delta\":\"**Exploring options**\\n\\nChecking the alternatives.\"}\n\n")
+		fmt.Fprintf(
+			w, "data: {\"type\":\"response.completed\",\"sequence_number\":3,\"response\":%s}\n\n",
+			openAIResponsesJSONWithSummaryParts(
+				"Hello",
+				"Inspecting the project.",
+				"**Exploring options**\n\nChecking the alternatives.",
+			),
+		)
+	}))
+	defer server.Close()
+
+	adapter, err := NewOpenAIResponses("responses-test", server.URL, "", GenerationSettings{MaxOutputTokens: 4096})
+	if err != nil {
+		t.Fatalf("NewOpenAIResponses() error = %v", err)
+	}
+	var thoughtPartials []string
+	var final *model.LLMResponse
+	for response, generateErr := range adapter.GenerateContent(context.Background(), &model.LLMRequest{
+		Contents: []*genai.Content{genai.NewContentFromText("Hi", genai.RoleUser)},
+	}, true) {
+		if generateErr != nil {
+			t.Fatalf("GenerateContent() error = %v", generateErr)
+		}
+		if response.Partial {
+			thoughtPartials = append(thoughtPartials, response.Content.Parts[0].Text)
+		} else {
+			final = response
+		}
+	}
+
+	const wantText = "Inspecting the project.\n\n**Exploring options**\n\nChecking the alternatives."
+	if got := strings.Join(thoughtPartials, ""); got != wantText {
+		t.Fatalf("streamed thought text = %q, want %q", got, wantText)
+	}
+	if final == nil || len(final.Content.Parts) < 2 || final.Content.Parts[1].Text != wantText {
+		t.Fatalf("final response = %#v", final)
+	}
+}
+
 func openAIResponsesJSON(text string) string {
 	encodedText, _ := json.Marshal(text)
 	return fmt.Sprintf(`{"id":"resp-1","object":"response","created_at":1,"status":"completed","model":"responses-test","output":[{"id":"msg-1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":%s,"annotations":[]}]}],"usage":{"input_tokens":2,"input_tokens_details":{"cached_tokens":0},"output_tokens":1,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":3}}`, encodedText)
@@ -396,6 +440,16 @@ func openAIResponsesJSONWithSummary(text, summary string) string {
 	encodedText, _ := json.Marshal(text)
 	encodedSummary, _ := json.Marshal(summary)
 	return fmt.Sprintf(`{"id":"resp-1","object":"response","created_at":1,"status":"completed","model":"responses-test","output":[{"id":"rs-1","type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":%s}]},{"id":"msg-1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":%s,"annotations":[]}]}],"usage":{"input_tokens":2,"input_tokens_details":{"cached_tokens":0},"output_tokens":3,"output_tokens_details":{"reasoning_tokens":2},"total_tokens":5}}`, encodedSummary, encodedText)
+}
+
+func openAIResponsesJSONWithSummaryParts(text string, summaries ...string) string {
+	encodedText, _ := json.Marshal(text)
+	parts := make([]string, 0, len(summaries))
+	for _, summary := range summaries {
+		encodedSummary, _ := json.Marshal(summary)
+		parts = append(parts, fmt.Sprintf(`{"type":"summary_text","text":%s}`, encodedSummary))
+	}
+	return fmt.Sprintf(`{"id":"resp-1","object":"response","created_at":1,"status":"completed","model":"responses-test","output":[{"id":"rs-1","type":"reasoning","status":"completed","summary":[%s]},{"id":"msg-1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":%s,"annotations":[]}]}],"usage":{"input_tokens":2,"input_tokens_details":{"cached_tokens":0},"output_tokens":3,"output_tokens_details":{"reasoning_tokens":2},"total_tokens":5}}`, strings.Join(parts, ","), encodedText)
 }
 
 func responseText(content *genai.Content) string {
