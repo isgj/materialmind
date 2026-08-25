@@ -400,19 +400,28 @@ func toOpenAIChatMessages(content *genai.Content) ([]openai.ChatCompletionMessag
 func openAIChatAttachmentPart(
 	blob *genai.Blob,
 ) openai.ChatCompletionContentPartUnionParam {
-	encoded := base64.StdEncoding.EncodeToString(blob.Data)
-	if strings.HasPrefix(blob.MIMEType, "image/") {
-		return openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
-			URL:    "data:" + blob.MIMEType + ";base64," + encoded,
-			Detail: "auto",
-		})
-	}
 	filename := strings.TrimSpace(blob.DisplayName)
 	if filename == "" {
 		filename = "attachment"
 	}
+	if strings.HasPrefix(blob.MIMEType, "image/") {
+		return openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
+			URL: "data:" + blob.MIMEType + ";base64," +
+				base64.StdEncoding.EncodeToString(blob.Data),
+			Detail: "auto",
+		})
+	}
+	if isTextAttachmentMIME(blob.MIMEType) {
+		// Inline text-like attachments instead of using the file part: many
+		// OpenAI-compatible servers do not implement it and reject the whole
+		// request, which bricks the session on history replay. This mirrors
+		// the Anthropic adapter's document handling.
+		return openai.TextContentPart(
+			"Attached file: " + filename + "\n" + string(blob.Data),
+		)
+	}
 	return openai.FileContentPart(openai.ChatCompletionContentPartFileFileParam{
-		FileData: param.NewOpt(encoded),
+		FileData: param.NewOpt(base64.StdEncoding.EncodeToString(blob.Data)),
 		Filename: param.NewOpt(filename),
 	})
 }

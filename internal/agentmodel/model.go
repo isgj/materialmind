@@ -245,3 +245,31 @@ func normalizeJSONSchemaType(value any) any {
 		return value
 	}
 }
+
+// isTextAttachmentMIME reports whether an attachment MIME type is text-like
+// and should be inlined into the request as plain text. The accepted set
+// mirrors the upload allow-list in internal/httpapi. Many OpenAI-compatible
+// servers (vLLM/SGLang and similar) do not implement the input_file content
+// part and reject the whole request with a 400; because ADK replays the
+// session history on every request, a single attached text file would
+// otherwise break every subsequent run in the session.
+func isTextAttachmentMIME(mediaType string) bool {
+	if strings.HasPrefix(mediaType, "text/") {
+		return true
+	}
+	if !strings.HasPrefix(mediaType, "application/") {
+		return false
+	}
+	subtype := strings.TrimPrefix(mediaType, "application/")
+	return subtype == "json" ||
+		subtype == "javascript" ||
+		subtype == "sql" ||
+		subtype == "toml" ||
+		subtype == "xml" ||
+		subtype == "yaml" ||
+		subtype == "x-javascript" ||
+		subtype == "x-sh" ||
+		subtype == "x-yaml" ||
+		strings.HasSuffix(subtype, "+json") ||
+		strings.HasSuffix(subtype, "+xml")
+}

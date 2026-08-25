@@ -359,26 +359,38 @@ func toOpenAIResponsesItems(content *genai.Content) ([]openairesponses.ResponseI
 func openAIResponsesAttachmentPart(
 	blob *genai.Blob,
 ) openairesponses.ResponseInputContentUnionParam {
-	encoded := base64.StdEncoding.EncodeToString(blob.Data)
+	filename := strings.TrimSpace(blob.DisplayName)
+	if filename == "" {
+		filename = "attachment"
+	}
 	if strings.HasPrefix(blob.MIMEType, "image/") {
 		part := openairesponses.ResponseInputContentParamOfInputImage(
 			openairesponses.ResponseInputImageDetailAuto,
 		)
 		part.OfInputImage.ImageURL = param.NewOpt(
-			"data:" + blob.MIMEType + ";base64," + encoded,
+			"data:" + blob.MIMEType + ";base64," +
+				base64.StdEncoding.EncodeToString(blob.Data),
 		)
 		return part
 	}
-	filename := strings.TrimSpace(blob.DisplayName)
-	if filename == "" {
-		filename = "attachment"
+	if isTextAttachmentMIME(blob.MIMEType) {
+		// Inline text-like attachments instead of using input_file: many
+		// OpenAI-compatible servers do not implement input_file and reject
+		// the whole request, which bricks the session on history replay.
+		// This mirrors the Anthropic adapter's document handling.
+		return openairesponses.ResponseInputContentParamOfInputText(
+			"Attached file: " + filename + "\n" + string(blob.Data),
+		)
 	}
 	// The Responses API input_file part requires file_data to be a data URL
 	// (data:<mediatype>;base64,<data>); a bare base64 string is rejected with
 	// an invalid_request_error on input[<n>].content[<n>].file_data.
 	return openairesponses.ResponseInputContentUnionParam{
 		OfInputFile: &openairesponses.ResponseInputFileParam{
-			FileData: param.NewOpt("data:" + blob.MIMEType + ";base64," + encoded),
+			FileData: param.NewOpt(
+				"data:" + blob.MIMEType + ";base64," +
+					base64.StdEncoding.EncodeToString(blob.Data),
+			),
 			Filename: param.NewOpt(filename),
 			Detail:   openairesponses.ResponseInputFileDetailAuto,
 		},

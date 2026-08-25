@@ -2,6 +2,7 @@ package agentmodel
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -218,9 +219,64 @@ func TestToOpenAIResponsesRequest(t *testing.T) {
 	}
 }
 
-func TestToOpenAIResponsesRequestIncludesAttachment(t *testing.T) {
-	attachment := genai.NewPartFromBytes([]byte("package example"), "text/plain")
-	attachment.InlineData.DisplayName = "context.go"
+func TestToOpenAIResponsesRequestInlinesTextAttachmentAsInputText(t *testing.T) {
+	tests := []struct {
+		displayName string
+		wantText    string
+	}{
+		{
+			displayName: "context.go",
+			wantText:    `"text":"Attached file: context.go\npackage example"`,
+		},
+		{
+			displayName: "",
+			wantText:    `"text":"Attached file: attachment\npackage example"`,
+		},
+	}
+	for _, test := range tests {
+		name := test.displayName
+		if name == "" {
+			name = "unnamed"
+		}
+		t.Run(name, func(t *testing.T) {
+			attachment := genai.NewPartFromBytes([]byte("package example"), "text/plain")
+			attachment.InlineData.DisplayName = test.displayName
+			request, err := toOpenAIResponsesRequest(&model.LLMRequest{
+				Contents: []*genai.Content{
+					genai.NewContentFromParts([]*genai.Part{
+						{Text: "Review the attachment"},
+						attachment,
+					}, genai.RoleUser),
+				},
+			}, "responses-test", GenerationSettings{MaxOutputTokens: 4096}, "scope-1")
+			if err != nil {
+				t.Fatalf("toOpenAIResponsesRequest() error = %v", err)
+			}
+			encoded, err := json.Marshal(request)
+			if err != nil {
+				t.Fatalf("json.Marshal() error = %v", err)
+			}
+			for _, expected := range []string{
+				`"type":"input_text"`,
+				test.wantText,
+			} {
+				if !strings.Contains(string(encoded), expected) {
+					t.Fatalf("request JSON does not contain %q: %s", expected, encoded)
+				}
+			}
+			for _, removed := range []string{`"type":"input_file"`, "file_data"} {
+				if strings.Contains(string(encoded), removed) {
+					t.Fatalf("request JSON contains removed part %q: %s", removed, encoded)
+				}
+			}
+		})
+	}
+}
+
+func TestToOpenAIResponsesRequestSendsPDFAsInputFile(t *testing.T) {
+	pdfContent := []byte("%PDF-1.4 fake")
+	attachment := genai.NewPartFromBytes(pdfContent, "application/pdf")
+	attachment.InlineData.DisplayName = "doc.pdf"
 	request, err := toOpenAIResponsesRequest(&model.LLMRequest{
 		Contents: []*genai.Content{
 			genai.NewContentFromParts([]*genai.Part{
@@ -238,8 +294,8 @@ func TestToOpenAIResponsesRequestIncludesAttachment(t *testing.T) {
 	}
 	for _, expected := range []string{
 		`"type":"input_file"`,
-		`"filename":"context.go"`,
-		`"file_data":"data:text/plain;base64,cGFja2FnZSBleGFtcGxl"`,
+		`"filename":"doc.pdf"`,
+		`"file_data":"data:application/pdf;base64,` + base64.StdEncoding.EncodeToString(pdfContent) + `"`,
 	} {
 		if !strings.Contains(string(encoded), expected) {
 			t.Fatalf("request JSON does not contain %q: %s", expected, encoded)
