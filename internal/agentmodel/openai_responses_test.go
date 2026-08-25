@@ -239,7 +239,7 @@ func TestToOpenAIResponsesRequestIncludesAttachment(t *testing.T) {
 	for _, expected := range []string{
 		`"type":"input_file"`,
 		`"filename":"context.go"`,
-		`"file_data":"cGFja2FnZSBleGFtcGxl"`,
+		`"file_data":"data:text/plain;base64,cGFja2FnZSBleGFtcGxl"`,
 	} {
 		if !strings.Contains(string(encoded), expected) {
 			t.Fatalf("request JSON does not contain %q: %s", expected, encoded)

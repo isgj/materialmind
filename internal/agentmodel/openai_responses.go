@@ -373,9 +373,12 @@ func openAIResponsesAttachmentPart(
 	if filename == "" {
 		filename = "attachment"
 	}
+	// The Responses API input_file part requires file_data to be a data URL
+	// (data:<mediatype>;base64,<data>); a bare base64 string is rejected with
+	// an invalid_request_error on input[<n>].content[<n>].file_data.
 	return openairesponses.ResponseInputContentUnionParam{
 		OfInputFile: &openairesponses.ResponseInputFileParam{
-			FileData: param.NewOpt(encoded),
+			FileData: param.NewOpt("data:" + blob.MIMEType + ";base64," + encoded),
 			Filename: param.NewOpt(filename),
 			Detail:   openairesponses.ResponseInputFileDetailAuto,
 		},
