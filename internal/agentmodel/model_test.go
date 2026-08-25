@@ -137,3 +137,46 @@ func taskAgentToolDeclaration(name string) *genai.FunctionDeclaration {
 		},
 	}
 }
+
+func TestIsTextAttachmentMIME(t *testing.T) {
+	tests := []struct {
+		mediaType string
+		want      bool
+	}{
+		// text/* prefix.
+		{mediaType: "text/plain", want: true},
+		{mediaType: "text/markdown", want: true},
+		{mediaType: "text/x-diff", want: true},
+		// Upload-allow-listed application types.
+		{mediaType: "application/json", want: true},
+		{mediaType: "application/javascript", want: true},
+		{mediaType: "application/sql", want: true},
+		{mediaType: "application/toml", want: true},
+		{mediaType: "application/xml", want: true},
+		{mediaType: "application/yaml", want: true},
+		{mediaType: "application/x-javascript", want: true},
+		{mediaType: "application/x-sh", want: true},
+		{mediaType: "application/x-yaml", want: true},
+		{mediaType: "application/vnd.api+json", want: true},
+		{mediaType: "application/ld+xml", want: true},
+		// Binaries and other types stay as file parts.
+		{mediaType: "application/pdf", want: false},
+		{mediaType: "application/octet-stream", want: false},
+		{mediaType: "application/zip", want: false},
+		{mediaType: "image/png", want: false},
+		{mediaType: "audio/mp3", want: false},
+		{mediaType: "", want: false},
+		{mediaType: "application/", want: false},
+	}
+	for _, test := range tests {
+		name := test.mediaType
+		if name == "" {
+			name = "empty"
+		}
+		t.Run(name, func(t *testing.T) {
+			if got := isTextAttachmentMIME(test.mediaType); got != test.want {
+				t.Fatalf("isTextAttachmentMIME(%q) = %v, want %v", test.mediaType, got, test.want)
+			}
+		})
+	}
+}

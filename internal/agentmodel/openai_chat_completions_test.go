@@ -2,6 +2,7 @@ package agentmodel
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -177,7 +178,7 @@ func TestToOpenAIChatRequest(t *testing.T) {
 	}
 }
 
-func TestToOpenAIChatRequestIncludesAttachment(t *testing.T) {
+func TestToOpenAIChatRequestInlinesTextAttachmentAsText(t *testing.T) {
 	attachment := genai.NewPartFromBytes([]byte("package example"), "text/plain")
 	attachment.InlineData.DisplayName = "context.go"
 	request, err := toOpenAIChatRequest(&model.LLMRequest{
@@ -196,9 +197,43 @@ func TestToOpenAIChatRequestIncludesAttachment(t *testing.T) {
 		t.Fatalf("json.Marshal() error = %v", err)
 	}
 	for _, expected := range []string{
+		`"type":"text"`,
+		`"text":"Attached file: context.go\npackage example"`,
+	} {
+		if !strings.Contains(string(encoded), expected) {
+			t.Fatalf("request JSON does not contain %q: %s", expected, encoded)
+		}
+	}
+	for _, removed := range []string{`"type":"file"`, "file_data"} {
+		if strings.Contains(string(encoded), removed) {
+			t.Fatalf("request JSON contains removed part %q: %s", removed, encoded)
+		}
+	}
+}
+
+func TestToOpenAIChatRequestSendsPDFAsFile(t *testing.T) {
+	pdfContent := []byte("%PDF-1.4 fake")
+	attachment := genai.NewPartFromBytes(pdfContent, "application/pdf")
+	attachment.InlineData.DisplayName = "doc.pdf"
+	request, err := toOpenAIChatRequest(&model.LLMRequest{
+		Contents: []*genai.Content{
+			genai.NewContentFromParts([]*genai.Part{
+				{Text: "Review the attachment"},
+				attachment,
+			}, genai.RoleUser),
+		},
+	}, "openai-test", GenerationSettings{MaxOutputTokens: 4096})
+	if err != nil {
+		t.Fatalf("toOpenAIChatRequest() error = %v", err)
+	}
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	for _, expected := range []string{
 		`"type":"file"`,
-		`"filename":"context.go"`,
-		`"file_data":"cGFja2FnZSBleGFtcGxl"`,
+		`"filename":"doc.pdf"`,
+		`"file_data":"` + base64.StdEncoding.EncodeToString(pdfContent) + `"`,
 	} {
 		if !strings.Contains(string(encoded), expected) {
 			t.Fatalf("request JSON does not contain %q: %s", expected, encoded)
