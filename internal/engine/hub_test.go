@@ -190,6 +190,75 @@ func TestPublishEventStreamsADKThoughtAsAgentNote(t *testing.T) {
 	}
 }
 
+func TestPublishEventPreservesFinalADKThoughtPartBoundaries(t *testing.T) {
+	hub := NewHub()
+	hub.Create("run-1")
+	engine := &Engine{
+		hub: hub,
+		active: map[string]*activeRun{
+			"session-1": {runID: "run-1"},
+		},
+	}
+	run := store.Run{ID: "run-1", SessionID: "session-1"}
+	for _, text := range []string{
+		"**Inspecting the workspace**\n\nChecking files.",
+		"\n\n",
+		"**Preparing the answer**\n\nSummarizing the findings.",
+	} {
+		engine.publishEvent(run, &session.Event{
+			Author: "workspace_agent",
+			LLMResponse: model.LLMResponse{
+				Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{
+					Text: text, Thought: true,
+				}}},
+				Partial: true,
+			},
+		})
+	}
+	engine.publishEvent(run, &session.Event{
+		ID:     "event-final",
+		Author: "workspace_agent",
+		LLMResponse: model.LLMResponse{Content: &genai.Content{
+			Role: genai.RoleModel,
+			Parts: []*genai.Part{
+				{Thought: true, ThoughtSignature: []byte("opaque")},
+				{Text: "**Inspecting the workspace**\n\nChecking files.", Thought: true},
+				{Text: "**Preparing the answer**\n\nSummarizing the findings.", Thought: true},
+			},
+		}},
+	})
+	hub.Complete("run-1")
+
+	events, ok := hub.Subscribe(t.Context(), "run-1", 0)
+	if !ok {
+		t.Fatal("Subscribe() ok = false")
+	}
+	var collected []StreamEvent
+	for event := range events {
+		collected = append(collected, event)
+	}
+	if len(collected) != 4 {
+		t.Fatalf("stream events = %#v, want three deltas and one replacement", collected)
+	}
+	for index := range 3 {
+		if collected[index].Type != "thought_delta" {
+			t.Fatalf("event %d type = %q, want thought_delta", index, collected[index].Type)
+		}
+	}
+	if collected[3].Type != "thought_replace" {
+		t.Fatalf("final event type = %q, want thought_replace", collected[3].Type)
+	}
+	payload, ok := collected[3].Data.(map[string]any)
+	if !ok {
+		t.Fatalf("final thought payload = %T, want map[string]any", collected[3].Data)
+	}
+	const want = "**Inspecting the workspace**\n\nChecking files.\n\n" +
+		"**Preparing the answer**\n\nSummarizing the findings."
+	if payload["text"] != want {
+		t.Fatalf("final thought text = %q, want %q", payload["text"], want)
+	}
+}
+
 func TestPublishEventStreamsSubAgentLifecycleAndChildMetadata(t *testing.T) {
 	hub := NewHub()
 	hub.Create("run-1")

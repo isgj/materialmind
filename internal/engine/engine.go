@@ -907,6 +907,16 @@ func (e *Engine) publishEvent(runRecord store.Run, event *session.Event) {
 	if event.Content == nil {
 		return
 	}
+	finalThoughtText := ""
+	if !event.Partial {
+		thoughtParts := make([]string, 0, len(event.Content.Parts))
+		for _, part := range event.Content.Parts {
+			if part != nil && part.Text != "" && part.Thought {
+				thoughtParts = append(thoughtParts, part.Text)
+			}
+		}
+		finalThoughtText = strings.Join(thoughtParts, "\n\n")
+	}
 	thoughtStreamFinished := !event.Partial
 	defer func() {
 		if thoughtStreamFinished {
@@ -958,6 +968,9 @@ func (e *Engine) publishEvent(runRecord store.Run, event *session.Event) {
 		case part.Text != "" && (event.Author == "user" || event.Content.Role == genai.RoleUser):
 			continue
 		case part.Text != "" && part.Thought:
+			if !event.Partial && thoughtReplaced {
+				continue
+			}
 			payload := map[string]any{
 				"id":   e.thoughtStreamID(runRecord, event),
 				"text": part.Text,
@@ -966,6 +979,7 @@ func (e *Engine) publishEvent(runRecord store.Run, event *session.Event) {
 			eventType := "thought_delta"
 			if !event.Partial && !thoughtReplaced {
 				eventType = "thought_replace"
+				payload["text"] = finalThoughtText
 				thoughtReplaced = true
 			}
 			e.hub.Publish(runRecord.ID, eventType, payload)
